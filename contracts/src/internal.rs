@@ -35,6 +35,19 @@ pub(crate) fn accrual(startup: &Startup, kind: &TokenKind, debt: NearToken) -> (
     }
 }
 
+/// Spending limits must make sense and the payee list must stay small and duplicate-free.
+pub(crate) fn validate_policy(per_tx_cap: NearToken, daily_cap: NearToken, payees: &[AccountId]) {
+    require!(!per_tx_cap.is_zero(), "Per-payment cap must be above zero");
+    require!(
+        daily_cap >= per_tx_cap,
+        "Daily cap cannot be below the per-payment cap"
+    );
+    require!(payees.len() <= MAX_PAYEES, "At most 10 allowed payees");
+    for (i, p) in payees.iter().enumerate() {
+        require!(!payees[..i].contains(p), "Duplicate payee");
+    }
+}
+
 /// Image links must be short and use https or ipfs.
 pub(crate) fn validate_media(media: &Option<String>) {
     if let Some(url) = media {
@@ -46,6 +59,19 @@ pub(crate) fn validate_media(media: &Option<String>) {
 }
 
 impl Contract {
+    /// The startup, but only if the caller is its founder.
+    pub(crate) fn founder_startup(&mut self, startup_id: StartupId) -> &mut Startup {
+        let startup = self
+            .startups
+            .get_mut(&startup_id)
+            .unwrap_or_else(|| env::panic_str("Startup not found"));
+        require!(
+            env::predecessor_account_id() == startup.founder,
+            "Only the founder can manage agents"
+        );
+        startup
+    }
+
     /// The ONLY place a token changes owner. Every transfer entry point (today `nft_transfer`,
     /// later `nft_transfer_call` and any rollback path) must go through here, so the soulbound
     /// rule and the revenue settlement can never be bypassed.

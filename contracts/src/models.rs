@@ -16,6 +16,10 @@ pub const MAX_ROLE_POOL_BPS: u32 = 2_000;
 /// The platform fee can never be set above this (5%).
 pub const MAX_PLATFORM_FEE_BPS: u32 = 500;
 pub const MAX_ROLE_WEIGHT: u32 = 100;
+pub const MAX_AGENTS: usize = 5;
+pub const MAX_PAYEES: usize = 10;
+/// Agent spending limits reset every UTC day.
+pub const NANOS_PER_DAY: u64 = 86_400_000_000_000;
 
 /// What the founder passes in for each tier when creating a startup.
 #[near(serializers = [json])]
@@ -91,6 +95,27 @@ pub enum StartupStatus {
     Migrated { to: AccountId },
 }
 
+/// An AI agent that works for the startup and can spend from the agent budget bucket, but only
+/// inside the limits the founder set. The agent signs with its own key (in production a
+/// function-call access key restricted to `agent_spend`), so it can never do anything else.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Agent {
+    pub account_id: AccountId,
+    pub name: String,
+    /// The most one payment may be.
+    pub per_tx_cap: NearToken,
+    /// The most the agent may spend in one UTC day.
+    pub daily_cap: NearToken,
+    /// The agent can only pay these accounts.
+    pub payees: Vec<AccountId>,
+    /// Kill switch: the founder can pause an agent at any time.
+    pub active: bool,
+    /// The UTC day number `spent_today` refers to.
+    pub day: u64,
+    pub spent_today: NearToken,
+}
+
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
 pub struct Startup {
@@ -113,6 +138,7 @@ pub struct Startup {
     pub role_acc: NearToken,
     /// Sum of the weights of all active role NFTs.
     pub total_role_weight: u64,
+    pub agents: Vec<Agent>,
     pub status: StartupStatus,
 }
 

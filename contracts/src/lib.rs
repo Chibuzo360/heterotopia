@@ -24,7 +24,7 @@ mod tests;
 pub use models::*;
 
 use events::{emit, emit_event};
-use internal::{accrual, bps_of, validate_media};
+use internal::{accrual, bps_of, validate_media, validate_policy};
 use near_sdk::json_types::U128;
 use near_sdk::serde_json::json;
 use near_sdk::store::{IterableMap, LookupMap};
@@ -144,6 +144,7 @@ impl Contract {
                 ops_balance: NearToken::from_yoctonear(0),
                 role_acc: NearToken::from_yoctonear(0),
                 total_role_weight: 0,
+                agents: vec![],
                 status: StartupStatus::Active,
             },
         );
@@ -568,6 +569,200 @@ impl Contract {
         Promise::new(to).transfer(amount)
     }
 
+    // ------------------------------------------------------------------- agents
+
+    /// The founder hires an AI agent. It can later spend from the agent budget bucket through
+    /// `agent_spend`, within these limits and only to the listed payees.
+    pub fn register_agent(
+        &mut self,
+        startup_id: StartupId,
+        agent_id: AccountId,
+        name: String,
+        per_tx_cap: NearToken,
+        daily_cap: NearToken,
+        payees: Vec<AccountId>,
+    ) {
+        require!(
+            !name.trim().is_empty() && name.len() <= 32,
+            "Agent name must be 1-32 characters"
+        );
+        validate_policy(per_tx_cap, daily_cap, &payees);
+        let startup = self.founder_startup(startup_id);
+        require!(
+            startup.status == StartupStatus::Active,
+            "Startup is migrated and frozen"
+        );
+        require!(startup.agents.len() < MAX_AGENTS, "At most 5 agents");
+        require!(
+            !startup.agents.iter().any(|a| a.account_id == agent_id),
+            "Agent already registered"
+        );
+        startup.agents.push(Agent {
+            account_id: agent_id.clone(),
+            name,
+            per_tx_cap,
+            daily_cap,
+            payees,
+            active: true,
+            day: 0,
+            spent_today: NearToken::from_yoctonear(0),
+        });
+        emit_event(
+            "heto",
+            "1.0.0",
+            "agent_registered",
+            json!([{ "startup_id": startup_id, "agent": agent_id }]),
+        );
+    }
+
+    /// The founder changes an agent's limits and payee list. Today's spending is kept.
+    pub fn update_agent_policy(
+        &mut self,
+        startup_id: StartupId,
+        agent_id: AccountId,
+        per_tx_cap: NearToken,
+        daily_cap: NearToken,
+        payees: Vec<AccountId>,
+    ) {
+        validate_policy(per_tx_cap, daily_cap, &payees);
+        let startup = self.founder_startup(startup_id);
+        let agent = startup
+            .agents
+            .iter_mut()
+            .find(|a| a.account_id == agent_id)
+            .unwrap_or_else(|| env::panic_str("Agent not found"));
+        agent.per_tx_cap = per_tx_cap;
+        agent.daily_cap = daily_cap;
+        agent.payees = payees;
+        emit_event(
+            "heto",
+            "1.0.0",
+            "agent_policy_updated",
+            json!([{ "startup_id": startup_id, "agent": agent_id }]),
+        );
+    }
+
+    /// Kill switch: the founder pauses (`false`) or resumes (`true`) an agent.
+    pub fn set_agent_active(&mut self, startup_id: StartupId, agent_id: AccountId, active: bool) {
+        let startup = self.founder_startup(startup_id);
+        let agent = startup
+            .agents
+            .iter_mut()
+            .find(|a| a.account_id == agent_id)
+            .unwrap_or_else(|| env::panic_str("Agent not found"));
+        agent.active = active;
+        emit_event(
+            "heto",
+            "1.0.0",
+            "agent_active_changed",
+            json!([{ "startup_id": startup_id, "agent": agent_id, "active": active }]),
+        );
+    }
+
+    /// The founder fires an agent for good.
+    pub fn remove_agent(&mut self, startup_id: StartupId, agent_id: AccountId) {
+        let startup = self.founder_startup(startup_id);
+        let before = startup.agents.len();
+        startup.agents.retain(|a| a.account_id != agent_id);
+        require!(startup.agents.len() < before, "Agent not found");
+        emit_event(
+            "heto",
+            "1.0.0",
+            "agent_removed",
+            json!([{ "startup_id": startup_id, "agent": agent_id }]),
+        );
+    }
+
+    /// An AI agent pays someone from the agent budget bucket. Returns `true` if the payment was
+    /// made, `false` if the agent's rules refused it. Either way an event records what happened
+    /// and why, so the dashboard can show approvals and refusals. A refusal changes no balances.
+    /// Callers who are not registered agents of this startup panic.
+    pub fn agent_spend(
+        &mut self,
+        startup_id: StartupId,
+        to: AccountId,
+        amount: NearToken,
+        memo: String,
+    ) -> bool {
+        let caller = env::predecessor_account_id();
+        let startup = self
+            .startups
+            .get_mut(&startup_id)
+            .unwrap_or_else(|| env::panic_str("Startup not found"));
+        require!(
+            startup.status == StartupStatus::Active,
+            "Startup is migrated and frozen"
+        );
+        let agent = startup
+            .agents
+            .iter_mut()
+            .find(|a| a.account_id == caller)
+            .unwrap_or_else(|| env::panic_str("Not a registered agent of this startup"));
+        require!(
+            !memo.trim().is_empty() && memo.len() <= 140,
+            "Memo must be 1-140 characters"
+        );
+        require!(!amount.is_zero(), "Amount must be above zero");
+
+        let today = env::block_timestamp() / NANOS_PER_DAY;
+        if agent.day != today {
+            agent.day = today;
+            agent.spent_today = NearToken::from_yoctonear(0);
+        }
+        let spent_after = agent
+            .spent_today
+            .as_yoctonear()
+            .saturating_add(amount.as_yoctonear());
+
+        let refusal = if !agent.active {
+            Some("agent_paused")
+        } else if amount > agent.per_tx_cap {
+            Some("over_per_payment_cap")
+        } else if spent_after > agent.daily_cap.as_yoctonear() {
+            Some("over_daily_cap")
+        } else if !agent.payees.contains(&to) {
+            Some("payee_not_allowed")
+        } else if amount > startup.agent_balance {
+            Some("not_enough_agent_budget")
+        } else {
+            None
+        };
+
+        if let Some(reason) = refusal {
+            emit_event(
+                "heto",
+                "1.0.0",
+                "agent_spend_refused",
+                json!([{
+                    "startup_id": startup_id,
+                    "agent": caller,
+                    "to": to,
+                    "amount": amount.as_yoctonear().to_string(),
+                    "memo": memo,
+                    "reason": reason,
+                }]),
+            );
+            return false;
+        }
+
+        agent.spent_today = NearToken::from_yoctonear(spent_after);
+        startup.agent_balance = startup.agent_balance.saturating_sub(amount);
+        emit_event(
+            "heto",
+            "1.0.0",
+            "agent_spend",
+            json!([{
+                "startup_id": startup_id,
+                "agent": caller,
+                "to": to,
+                "amount": amount.as_yoctonear().to_string(),
+                "memo": memo,
+            }]),
+        );
+        let _ = Promise::new(to).transfer(amount);
+        true
+    }
+
     // ------------------------------------------------------------------- views
 
     pub fn get_startup(&self, startup_id: StartupId) -> Option<Startup> {
@@ -581,6 +776,15 @@ impl Contract {
             .take(limit.unwrap_or(20) as usize)
             .map(|(_, s)| s.clone())
             .collect()
+    }
+
+    pub fn get_agent(&self, startup_id: StartupId, agent_id: AccountId) -> Option<Agent> {
+        self.startups
+            .get(&startup_id)?
+            .agents
+            .iter()
+            .find(|a| a.account_id == agent_id)
+            .cloned()
     }
 
     /// What `claim` would pay this account right now.

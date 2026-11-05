@@ -734,3 +734,248 @@ fn operations_spending_needs_a_memo() {
     set_ctx(founder(), zero());
     let _ = c.spend_operations(1, stranger(), near(1), "  ".into());
 }
+
+// --------------------------------------------------------------------- agents
+
+fn agent() -> AccountId {
+    "agent.testnet".parse().unwrap()
+}
+
+const DAY: u64 = NANOS_PER_DAY;
+
+fn ctx_at(predecessor: AccountId, ts: u64) {
+    let mut b = VMContextBuilder::new();
+    b.current_account_id(accounts(0))
+        .predecessor_account_id(predecessor.clone())
+        .signer_account_id(predecessor)
+        .block_timestamp(ts);
+    testing_env!(b.build());
+}
+
+/// Startup 1 with 5 NEAR in the agent bucket and one agent: max 1 NEAR a payment, 3 NEAR a day,
+/// allowed to pay only `stranger()`.
+fn with_agent() -> Contract {
+    let mut c = setup_with(0, Some(alloc(5_000, 5_000, 0, 0)));
+    buy(&mut c, investor(), 0, near(1));
+    deposit(&mut c, near(10));
+    assert_eq!(c.get_startup(1).unwrap().agent_balance, near(5));
+    set_ctx(founder(), zero());
+    c.register_agent(
+        1,
+        agent(),
+        "Ops bot".into(),
+        near(1),
+        near(3),
+        vec![stranger()],
+    );
+    c
+}
+
+fn spend(c: &mut Contract, to: AccountId, amount: NearToken, ts: u64) -> bool {
+    ctx_at(agent(), ts);
+    c.agent_spend(1, to, amount, "Cloud credits".into())
+}
+
+fn last_log() -> String {
+    near_sdk::test_utils::get_logs()
+        .last()
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[test]
+fn founder_registers_an_agent() {
+    let c = with_agent();
+    let a = c.get_agent(1, agent()).unwrap();
+    assert!(a.active);
+    assert_eq!(a.per_tx_cap, near(1));
+    assert_eq!(a.payees, vec![stranger()]);
+    assert_eq!(c.get_startup(1).unwrap().agents.len(), 1);
+}
+
+#[test]
+#[should_panic(expected = "Only the founder can manage agents")]
+fn only_founder_registers_agents() {
+    let mut c = with_agent();
+    set_ctx(stranger(), zero());
+    c.register_agent(1, stranger(), "Evil".into(), near(1), near(1), vec![]);
+}
+
+#[test]
+#[should_panic(expected = "Agent already registered")]
+fn cannot_register_an_agent_twice() {
+    let mut c = with_agent();
+    set_ctx(founder(), zero());
+    c.register_agent(1, agent(), "Dup".into(), near(1), near(1), vec![]);
+}
+
+#[test]
+#[should_panic(expected = "Daily cap cannot be below")]
+fn daily_cap_must_cover_one_payment() {
+    let mut c = with_agent();
+    set_ctx(founder(), zero());
+    c.register_agent(1, stranger(), "Bot".into(), near(2), near(1), vec![]);
+}
+
+#[test]
+#[should_panic(expected = "At most 5 agents")]
+fn agent_count_is_capped() {
+    let mut c = with_agent();
+    set_ctx(founder(), zero());
+    for i in 0..5 {
+        let id: AccountId = format!("bot{i}.testnet").parse().unwrap();
+        c.register_agent(1, id, "Bot".into(), near(1), near(1), vec![]);
+    }
+}
+
+#[test]
+#[should_panic(expected = "Duplicate payee")]
+fn duplicate_payees_are_rejected() {
+    let mut c = with_agent();
+    set_ctx(founder(), zero());
+    c.register_agent(
+        1,
+        stranger(),
+        "Bot".into(),
+        near(1),
+        near(1),
+        vec![payer(), payer()],
+    );
+}
+
+#[test]
+fn agent_pays_an_allowed_payee_from_its_bucket() {
+    let mut c = with_agent();
+    assert!(spend(&mut c, stranger(), near(1), 1));
+    assert_eq!(get_created_receipts().len(), 1);
+    let s = c.get_startup(1).unwrap();
+    assert_eq!(s.agent_balance, near(4));
+    assert_eq!(s.ops_balance, zero(), "other buckets are untouched");
+    assert_eq!(c.get_agent(1, agent()).unwrap().spent_today, near(1));
+    assert!(last_log().contains("agent_spend"));
+}
+
+#[test]
+#[should_panic(expected = "Not a registered agent")]
+fn strangers_cannot_call_agent_spend() {
+    let mut c = with_agent();
+    ctx_at(stranger(), 1);
+    c.agent_spend(1, stranger(), near(1), "Hi".into());
+}
+
+#[test]
+#[should_panic(expected = "Not a registered agent")]
+fn founder_is_not_an_agent() {
+    let mut c = with_agent();
+    ctx_at(founder(), 1);
+    c.agent_spend(1, stranger(), near(1), "Hi".into());
+}
+
+#[test]
+fn payment_over_the_cap_is_refused_and_logged() {
+    let mut c = with_agent();
+    assert!(!spend(&mut c, stranger(), near(2), 1));
+    assert!(get_created_receipts().is_empty());
+    assert_eq!(c.get_startup(1).unwrap().agent_balance, near(5));
+    assert!(last_log().contains("agent_spend_refused"));
+    assert!(last_log().contains("over_per_payment_cap"));
+}
+
+#[test]
+fn unlisted_payee_is_refused() {
+    let mut c = with_agent();
+    assert!(!spend(&mut c, investor(), near(1), 1));
+    assert!(get_created_receipts().is_empty());
+    assert!(last_log().contains("payee_not_allowed"));
+    assert_eq!(c.get_startup(1).unwrap().agent_balance, near(5));
+}
+
+#[test]
+fn daily_cap_stops_the_agent_and_resets_next_day() {
+    let mut c = with_agent();
+    assert!(spend(&mut c, stranger(), near(1), 10));
+    assert!(spend(&mut c, stranger(), near(1), 20));
+    assert!(spend(&mut c, stranger(), near(1), 30));
+    assert!(
+        !spend(&mut c, stranger(), near(1), 40),
+        "fourth payment is over 3 NEAR a day"
+    );
+    assert!(last_log().contains("over_daily_cap"));
+    assert_eq!(c.get_startup(1).unwrap().agent_balance, near(2));
+    assert!(
+        spend(&mut c, stranger(), near(1), DAY + 1),
+        "a new day resets the limit"
+    );
+    assert_eq!(c.get_agent(1, agent()).unwrap().spent_today, near(1));
+}
+
+#[test]
+fn agent_cannot_spend_more_than_its_bucket_holds() {
+    let mut c = setup_with(0, Some(alloc(9_000, 1_000, 0, 0)));
+    buy(&mut c, investor(), 0, near(1));
+    deposit(&mut c, near(10)); // agent bucket: 1 NEAR
+    set_ctx(founder(), zero());
+    c.register_agent(1, agent(), "Bot".into(), near(5), near(5), vec![stranger()]);
+    assert!(spend(&mut c, stranger(), near(1), 1));
+    assert!(!spend(&mut c, stranger(), near(1), 2));
+    assert!(last_log().contains("not_enough_agent_budget"));
+}
+
+#[test]
+fn kill_switch_pauses_and_resumes_an_agent() {
+    let mut c = with_agent();
+    set_ctx(founder(), zero());
+    c.set_agent_active(1, agent(), false);
+    assert!(!spend(&mut c, stranger(), near(1), 1));
+    assert!(last_log().contains("agent_paused"));
+    set_ctx(founder(), zero());
+    c.set_agent_active(1, agent(), true);
+    assert!(spend(&mut c, stranger(), near(1), 2));
+}
+
+#[test]
+#[should_panic(expected = "Only the founder can manage agents")]
+fn agent_cannot_unpause_itself() {
+    let mut c = with_agent();
+    ctx_at(agent(), 1);
+    c.set_agent_active(1, agent(), true);
+}
+
+#[test]
+#[should_panic(expected = "Only the founder can manage agents")]
+fn agent_cannot_raise_its_own_limits() {
+    let mut c = with_agent();
+    ctx_at(agent(), 1);
+    c.update_agent_policy(1, agent(), near(100), near(100), vec![agent()]);
+}
+
+#[test]
+fn founder_can_tighten_limits_and_todays_spend_is_kept() {
+    let mut c = with_agent();
+    assert!(spend(&mut c, stranger(), near(1), 1));
+    set_ctx(founder(), zero());
+    c.update_agent_policy(1, agent(), near(1), near(1), vec![stranger()]);
+    assert!(
+        !spend(&mut c, stranger(), near(1), 2),
+        "already spent the new daily cap"
+    );
+    assert!(last_log().contains("over_daily_cap"));
+}
+
+#[test]
+#[should_panic(expected = "Not a registered agent")]
+fn removed_agent_cannot_spend() {
+    let mut c = with_agent();
+    set_ctx(founder(), zero());
+    c.remove_agent(1, agent());
+    spend(&mut c, stranger(), near(1), 1);
+}
+
+#[test]
+#[should_panic(expected = "Startup is migrated and frozen")]
+fn migrated_startup_blocks_agent_spending() {
+    let mut c = with_agent();
+    set_ctx(founder(), zero());
+    c.mark_migrated(1, accounts(4));
+    spend(&mut c, stranger(), near(1), 1);
+}
