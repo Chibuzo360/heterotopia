@@ -752,9 +752,9 @@ fn ctx_at(predecessor: AccountId, ts: u64) {
     testing_env!(b.build());
 }
 
-/// Startup 1 with 5 NEAR in the agent bucket and one agent: max 1 NEAR a payment, 3 NEAR a day,
-/// allowed to pay only `stranger()`.
-fn with_agent() -> Contract {
+/// Startup 1 with 5 NEAR in the agent bucket and one NEW agent (on probation): max 1 NEAR a
+/// payment, 3 NEAR a day, allowed to pay only `stranger()`.
+fn with_new_agent() -> Contract {
     let mut c = setup_with(0, Some(alloc(5_000, 5_000, 0, 0)));
     buy(&mut c, investor(), 0, near(1));
     deposit(&mut c, near(10));
@@ -768,6 +768,14 @@ fn with_agent() -> Contract {
         near(3),
         vec![stranger()],
     );
+    c
+}
+
+/// The same agent, already promoted (full limits).
+fn with_agent() -> Contract {
+    let mut c = with_new_agent();
+    set_ctx(founder(), zero());
+    c.promote_agent(1, agent());
     c
 }
 
@@ -794,7 +802,7 @@ fn founder_registers_an_agent() {
 }
 
 #[test]
-#[should_panic(expected = "Only the founder can manage agents")]
+#[should_panic(expected = "Only the founder or an agent manager can do this")]
 fn only_founder_registers_agents() {
     let mut c = with_agent();
     set_ctx(stranger(), zero());
@@ -916,6 +924,7 @@ fn agent_cannot_spend_more_than_its_bucket_holds() {
     deposit(&mut c, near(10)); // agent bucket: 1 NEAR
     set_ctx(founder(), zero());
     c.register_agent(1, agent(), "Bot".into(), near(5), near(5), vec![stranger()]);
+    c.promote_agent(1, agent());
     assert!(spend(&mut c, stranger(), near(1), 1));
     assert!(!spend(&mut c, stranger(), near(1), 2));
     assert!(last_log().contains("not_enough_agent_budget"));
@@ -934,7 +943,7 @@ fn kill_switch_pauses_and_resumes_an_agent() {
 }
 
 #[test]
-#[should_panic(expected = "Only the founder can manage agents")]
+#[should_panic(expected = "Only the founder or an agent manager can do this")]
 fn agent_cannot_unpause_itself() {
     let mut c = with_agent();
     ctx_at(agent(), 1);
@@ -942,7 +951,7 @@ fn agent_cannot_unpause_itself() {
 }
 
 #[test]
-#[should_panic(expected = "Only the founder can manage agents")]
+#[should_panic(expected = "Only the founder or an agent manager can do this")]
 fn agent_cannot_raise_its_own_limits() {
     let mut c = with_agent();
     ctx_at(agent(), 1);
@@ -978,4 +987,263 @@ fn migrated_startup_blocks_agent_spending() {
     set_ctx(founder(), zero());
     c.mark_migrated(1, accounts(4));
     spend(&mut c, stranger(), near(1), 1);
+}
+
+// ------------------------------------------------------ probation, managers, reputation
+
+fn cto() -> AccountId {
+    investor()
+}
+
+/// Startup 1 with an agent bucket, "CTO" allowed to manage agents (up to 2 NEAR a payment and
+/// 4 NEAR a day), and `cto()` holding a CTO role NFT. Returns the role's token id too.
+fn with_manager() -> (Contract, TokenId) {
+    let mut c = setup_with(0, Some(alloc(5_000, 5_000, 0, 0)));
+    buy(&mut c, payer(), 0, near(1));
+    deposit(&mut c, near(10));
+    let role = mint_role(&mut c, cto(), "CTO", 0);
+    set_ctx(founder(), zero());
+    c.set_agent_managers(1, vec!["CTO".into()], near(2), near(4));
+    (c, role)
+}
+
+fn hire(c: &mut Contract, by: AccountId, per_tx: u128, daily: u128) {
+    set_ctx(by, zero());
+    c.register_agent(
+        1,
+        agent(),
+        "Bot".into(),
+        near(per_tx),
+        near(daily),
+        vec![stranger()],
+    );
+}
+
+#[test]
+fn new_agent_is_on_probation_with_a_tenth_of_its_limits() {
+    let mut c = with_new_agent();
+    assert!(
+        !spend(&mut c, stranger(), near(1), 1),
+        "1 NEAR is within its cap but not within probation"
+    );
+    assert!(last_log().contains("probation_per_payment_cap"));
+    // probation allows 0.1 NEAR a payment and 0.3 NEAR a day
+    let tenth = NearToken::from_millinear(100);
+    assert!(spend(&mut c, stranger(), tenth, 2));
+    assert!(spend(&mut c, stranger(), tenth, 3));
+    assert!(spend(&mut c, stranger(), tenth, 4));
+    assert!(!spend(&mut c, stranger(), tenth, 5));
+    assert!(last_log().contains("probation_daily_cap"));
+}
+
+#[test]
+fn probation_over_the_real_cap_is_a_plain_refusal() {
+    let mut c = with_new_agent();
+    assert!(!spend(&mut c, stranger(), near(2), 1));
+    assert!(last_log().contains("over_per_payment_cap"));
+}
+
+#[test]
+fn probation_ends_by_itself_after_three_days() {
+    let mut c = with_new_agent();
+    assert!(!spend(&mut c, stranger(), near(1), 3 * DAY - 1));
+    assert!(spend(&mut c, stranger(), near(1), 3 * DAY + 1));
+}
+
+#[test]
+fn founder_can_promote_an_agent_early() {
+    let c = with_agent();
+    assert_eq!(c.get_agent(1, agent()).unwrap().probation_until, 0);
+    assert!(last_log().contains("agent_promoted"));
+}
+
+#[test]
+#[should_panic(expected = "Only the founder or an agent manager can do this")]
+fn agent_cannot_promote_itself() {
+    let mut c = with_new_agent();
+    ctx_at(agent(), 1);
+    c.promote_agent(1, agent());
+}
+
+#[test]
+fn founder_names_manager_roles() {
+    let (c, _) = with_manager();
+    let s = c.get_startup(1).unwrap();
+    assert_eq!(s.manager_roles, vec!["CTO".to_string()]);
+    assert_eq!(s.manager_max_per_tx, near(2));
+    assert_eq!(s.manager_max_daily, near(4));
+}
+
+#[test]
+#[should_panic(expected = "Only the founder can do this")]
+fn only_founder_names_manager_roles() {
+    let (mut c, _) = with_manager();
+    set_ctx(cto(), zero());
+    c.set_agent_managers(1, vec!["CTO".into()], near(100), near(100));
+}
+
+#[test]
+#[should_panic(expected = "Duplicate role")]
+fn manager_roles_cannot_repeat() {
+    let mut c = setup_with(0, None);
+    set_ctx(founder(), zero());
+    c.set_agent_managers(1, vec!["CTO".into(), "CTO".into()], near(1), near(1));
+}
+
+#[test]
+#[should_panic(expected = "At most 5 manager roles")]
+fn manager_roles_are_capped() {
+    let mut c = setup_with(0, None);
+    set_ctx(founder(), zero());
+    let roles = (0..6).map(|i| format!("R{i}")).collect();
+    c.set_agent_managers(1, roles, near(1), near(1));
+}
+
+#[test]
+fn manager_hires_within_the_ceiling_and_is_recorded() {
+    let (mut c, _) = with_manager();
+    hire(&mut c, cto(), 2, 4);
+    let a = c.get_agent(1, agent()).unwrap();
+    assert_eq!(a.hired_by, cto());
+    assert!(
+        a.probation_until > 0,
+        "managers' hires start on probation too"
+    );
+}
+
+#[test]
+#[should_panic(expected = "Above the limits set for managers")]
+fn manager_cannot_hire_above_the_ceiling() {
+    let (mut c, _) = with_manager();
+    hire(&mut c, cto(), 3, 4);
+}
+
+#[test]
+#[should_panic(expected = "Above the limits set for managers")]
+fn manager_cannot_raise_limits_above_the_ceiling() {
+    let (mut c, _) = with_manager();
+    hire(&mut c, cto(), 1, 2);
+    set_ctx(cto(), zero());
+    c.update_agent_policy(1, agent(), near(1), near(5), vec![stranger()]);
+}
+
+#[test]
+fn founder_is_not_bound_by_the_manager_ceiling() {
+    let (mut c, _) = with_manager();
+    hire(&mut c, founder(), 50, 100);
+    assert_eq!(c.get_agent(1, agent()).unwrap().per_tx_cap, near(50));
+}
+
+#[test]
+fn manager_can_pause_promote_and_fire() {
+    let (mut c, _) = with_manager();
+    hire(&mut c, cto(), 1, 2);
+    set_ctx(cto(), zero());
+    c.set_agent_active(1, agent(), false);
+    assert!(!c.get_agent(1, agent()).unwrap().active);
+    c.set_agent_active(1, agent(), true);
+    c.promote_agent(1, agent());
+    assert_eq!(c.get_agent(1, agent()).unwrap().probation_until, 0);
+    c.remove_agent(1, agent());
+    assert!(c.get_agent(1, agent()).is_none());
+}
+
+#[test]
+#[should_panic(expected = "Only the founder can do this")]
+fn manager_cannot_change_who_the_managers_are() {
+    let (mut c, _) = with_manager();
+    set_ctx(cto(), zero());
+    c.set_agent_managers(1, vec!["CTO".into(), "Intern".into()], near(2), near(4));
+}
+
+#[test]
+#[should_panic(expected = "Only the founder or an agent manager can do this")]
+fn role_not_on_the_manager_list_has_no_power() {
+    let (mut c, _) = with_manager();
+    mint_role(&mut c, stranger(), "Designer", 0);
+    hire(&mut c, stranger(), 1, 1);
+}
+
+#[test]
+#[should_panic(expected = "Only the founder or an agent manager can do this")]
+fn share_holders_are_not_managers() {
+    let (mut c, _) = with_manager();
+    hire(&mut c, payer(), 1, 1);
+}
+
+#[test]
+#[should_panic(expected = "Only the founder or an agent manager can do this")]
+fn revoked_manager_loses_the_power_at_once() {
+    let (mut c, role) = with_manager();
+    set_ctx(founder(), zero());
+    c.revoke_role(role);
+    hire(&mut c, cto(), 1, 1);
+}
+
+#[test]
+#[should_panic(expected = "Only the founder or an agent manager can do this")]
+fn manager_role_of_another_startup_is_useless_here() {
+    let (mut c, _) = with_manager();
+    set_ctx(founder(), zero());
+    let id = c.create_startup("Other".into(), tiers(), None, None);
+    c.set_agent_managers(id, vec!["CTO".into()], near(2), near(4));
+    c.mint_role(id, stranger(), "CTO".into(), 0, None);
+    hire(&mut c, stranger(), 1, 1); // startup 1, not 2
+}
+
+#[test]
+fn unknown_account_has_an_empty_record() {
+    let c = with_agent();
+    assert_eq!(c.get_agent_reputation(stranger()), AgentStats::default());
+}
+
+#[test]
+fn reputation_counts_what_the_agent_did() {
+    let mut c = with_agent();
+    assert!(spend(&mut c, stranger(), near(1), 1));
+    assert!(!spend(&mut c, investor(), near(1), 2));
+    set_ctx(founder(), zero());
+    c.set_agent_active(1, agent(), false);
+    c.remove_agent(1, agent());
+    let r = c.get_agent_reputation(agent());
+    assert_eq!(r.startups_served, 1);
+    assert_eq!(r.spends_ok, 1);
+    assert_eq!(r.spends_refused, 1);
+    assert_eq!(r.total_spent, near(1));
+    assert_eq!(r.times_paused, 1);
+    assert_eq!(r.times_removed, 1);
+}
+
+#[test]
+fn pausing_an_already_paused_agent_is_counted_once() {
+    let mut c = with_agent();
+    set_ctx(founder(), zero());
+    c.set_agent_active(1, agent(), false);
+    c.set_agent_active(1, agent(), false);
+    assert_eq!(c.get_agent_reputation(agent()).times_paused, 1);
+}
+
+#[test]
+fn reputation_follows_the_agent_across_startups() {
+    let mut c = with_agent();
+    set_ctx(founder(), zero());
+    let id = c.create_startup("Other".into(), tiers(), None, None);
+    c.register_agent(
+        id,
+        agent(),
+        "Bot".into(),
+        near(1),
+        near(1),
+        vec![stranger()],
+    );
+    assert_eq!(c.get_agent_reputation(agent()).startups_served, 2);
+}
+
+#[test]
+fn refusals_by_a_paused_agent_still_count() {
+    let mut c = with_agent();
+    set_ctx(founder(), zero());
+    c.set_agent_active(1, agent(), false);
+    assert!(!spend(&mut c, stranger(), near(1), 1));
+    assert_eq!(c.get_agent_reputation(agent()).spends_refused, 1);
 }

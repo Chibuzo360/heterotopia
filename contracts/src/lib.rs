@@ -40,6 +40,7 @@ enum StorageKey {
     Tokens,
     OwnerTokens,
     Balances,
+    AgentStats,
 }
 
 #[near(contract_state)]
@@ -59,6 +60,8 @@ pub struct Contract {
     /// Revenue already settled to an account (from shares it sold or roles it lost), waiting for
     /// `claim`.
     balances: LookupMap<AccountId, NearToken>,
+    /// Every agent account's record across all startups.
+    agent_stats: LookupMap<AccountId, AgentStats>,
 }
 
 #[near]
@@ -79,6 +82,7 @@ impl Contract {
             tokens: LookupMap::new(StorageKey::Tokens),
             tokens_per_owner: LookupMap::new(StorageKey::OwnerTokens),
             balances: LookupMap::new(StorageKey::Balances),
+            agent_stats: LookupMap::new(StorageKey::AgentStats),
         }
     }
 
@@ -145,6 +149,9 @@ impl Contract {
                 role_acc: NearToken::from_yoctonear(0),
                 total_role_weight: 0,
                 agents: vec![],
+                manager_roles: vec![],
+                manager_max_per_tx: NearToken::from_yoctonear(0),
+                manager_max_daily: NearToken::from_yoctonear(0),
                 status: StartupStatus::Active,
             },
         );
@@ -571,8 +578,47 @@ impl Contract {
 
     // ------------------------------------------------------------------- agents
 
-    /// The founder hires an AI agent. It can later spend from the agent budget bucket through
-    /// `agent_spend`, within these limits and only to the listed payees.
+    /// The founder names the roles (for example `["CTO"]`) whose active holders may manage
+    /// agents, and the most a manager may allow any one agent. Founder only. Pass an empty list
+    /// to turn delegation off.
+    pub fn set_agent_managers(
+        &mut self,
+        startup_id: StartupId,
+        roles: Vec<String>,
+        max_per_tx: NearToken,
+        max_daily: NearToken,
+    ) {
+        require!(roles.len() <= MAX_MANAGER_ROLES, "At most 5 manager roles");
+        for (i, r) in roles.iter().enumerate() {
+            require!(
+                !r.trim().is_empty() && r.len() <= 32,
+                "Role must be 1-32 characters"
+            );
+            require!(!roles[..i].contains(r), "Duplicate role");
+        }
+        require!(
+            max_daily >= max_per_tx,
+            "Daily limit cannot be below the per-payment limit"
+        );
+        let startup = self.founder_startup(startup_id);
+        require!(
+            startup.status == StartupStatus::Active,
+            "Startup is migrated and frozen"
+        );
+        startup.manager_roles = roles.clone();
+        startup.manager_max_per_tx = max_per_tx;
+        startup.manager_max_daily = max_daily;
+        emit_event(
+            "heto",
+            "1.0.0",
+            "agent_managers_set",
+            json!([{ "startup_id": startup_id, "roles": roles }]),
+        );
+    }
+
+    /// Hire an AI agent. Callable by the founder or a manager. It can later spend from the agent
+    /// budget bucket through `agent_spend`, within these limits and only to the listed payees. A
+    /// new agent starts on probation (see `PROBATION_DAYS`).
     pub fn register_agent(
         &mut self,
         startup_id: StartupId,
@@ -582,15 +628,26 @@ impl Contract {
         daily_cap: NearToken,
         payees: Vec<AccountId>,
     ) {
+        let by_founder = self.require_agent_admin(startup_id);
         require!(
             !name.trim().is_empty() && name.len() <= 32,
             "Agent name must be 1-32 characters"
         );
         validate_policy(per_tx_cap, daily_cap, &payees);
-        let startup = self.founder_startup(startup_id);
+        let caller = env::predecessor_account_id();
+        let startup = self
+            .startups
+            .get_mut(&startup_id)
+            .unwrap_or_else(|| env::panic_str("Startup not found"));
         require!(
             startup.status == StartupStatus::Active,
             "Startup is migrated and frozen"
+        );
+        require!(
+            by_founder
+                || (per_tx_cap <= startup.manager_max_per_tx
+                    && daily_cap <= startup.manager_max_daily),
+            "Above the limits set for managers"
         );
         require!(startup.agents.len() < MAX_AGENTS, "At most 5 agents");
         require!(
@@ -604,18 +661,21 @@ impl Contract {
             daily_cap,
             payees,
             active: true,
+            hired_by: caller.clone(),
+            probation_until: env::block_timestamp() + PROBATION_DAYS * NANOS_PER_DAY,
             day: 0,
             spent_today: NearToken::from_yoctonear(0),
         });
+        self.update_stats(&agent_id, |s| s.startups_served += 1);
         emit_event(
             "heto",
             "1.0.0",
             "agent_registered",
-            json!([{ "startup_id": startup_id, "agent": agent_id }]),
+            json!([{ "startup_id": startup_id, "agent": agent_id, "by": caller }]),
         );
     }
 
-    /// The founder changes an agent's limits and payee list. Today's spending is kept.
+    /// Change an agent's limits and payee list (founder or manager). Today's spending is kept.
     pub fn update_agent_policy(
         &mut self,
         startup_id: StartupId,
@@ -624,8 +684,18 @@ impl Contract {
         daily_cap: NearToken,
         payees: Vec<AccountId>,
     ) {
+        let by_founder = self.require_agent_admin(startup_id);
         validate_policy(per_tx_cap, daily_cap, &payees);
-        let startup = self.founder_startup(startup_id);
+        let startup = self
+            .startups
+            .get_mut(&startup_id)
+            .unwrap_or_else(|| env::panic_str("Startup not found"));
+        require!(
+            by_founder
+                || (per_tx_cap <= startup.manager_max_per_tx
+                    && daily_cap <= startup.manager_max_daily),
+            "Above the limits set for managers"
+        );
         let agent = startup
             .agents
             .iter_mut()
@@ -638,45 +708,84 @@ impl Contract {
             "heto",
             "1.0.0",
             "agent_policy_updated",
-            json!([{ "startup_id": startup_id, "agent": agent_id }]),
+            json!([{ "startup_id": startup_id, "agent": agent_id,
+                     "by": env::predecessor_account_id() }]),
         );
     }
 
-    /// Kill switch: the founder pauses (`false`) or resumes (`true`) an agent.
+    /// Kill switch: pause (`false`) or resume (`true`) an agent (founder or manager).
     pub fn set_agent_active(&mut self, startup_id: StartupId, agent_id: AccountId, active: bool) {
-        let startup = self.founder_startup(startup_id);
+        self.require_agent_admin(startup_id);
+        let startup = self
+            .startups
+            .get_mut(&startup_id)
+            .unwrap_or_else(|| env::panic_str("Startup not found"));
         let agent = startup
             .agents
             .iter_mut()
             .find(|a| a.account_id == agent_id)
             .unwrap_or_else(|| env::panic_str("Agent not found"));
+        let newly_paused = agent.active && !active;
         agent.active = active;
+        if newly_paused {
+            self.update_stats(&agent_id, |s| s.times_paused += 1);
+        }
         emit_event(
             "heto",
             "1.0.0",
             "agent_active_changed",
-            json!([{ "startup_id": startup_id, "agent": agent_id, "active": active }]),
+            json!([{ "startup_id": startup_id, "agent": agent_id, "active": active,
+                     "by": env::predecessor_account_id() }]),
         );
     }
 
-    /// The founder fires an agent for good.
+    /// End an agent's probation early, so it can use its full limits (founder or manager).
+    pub fn promote_agent(&mut self, startup_id: StartupId, agent_id: AccountId) {
+        self.require_agent_admin(startup_id);
+        let startup = self
+            .startups
+            .get_mut(&startup_id)
+            .unwrap_or_else(|| env::panic_str("Startup not found"));
+        let agent = startup
+            .agents
+            .iter_mut()
+            .find(|a| a.account_id == agent_id)
+            .unwrap_or_else(|| env::panic_str("Agent not found"));
+        agent.probation_until = 0;
+        emit_event(
+            "heto",
+            "1.0.0",
+            "agent_promoted",
+            json!([{ "startup_id": startup_id, "agent": agent_id,
+                     "by": env::predecessor_account_id() }]),
+        );
+    }
+
+    /// Fire an agent for good (founder or manager). It stays on the agent's record.
     pub fn remove_agent(&mut self, startup_id: StartupId, agent_id: AccountId) {
-        let startup = self.founder_startup(startup_id);
+        self.require_agent_admin(startup_id);
+        let startup = self
+            .startups
+            .get_mut(&startup_id)
+            .unwrap_or_else(|| env::panic_str("Startup not found"));
         let before = startup.agents.len();
         startup.agents.retain(|a| a.account_id != agent_id);
         require!(startup.agents.len() < before, "Agent not found");
+        self.update_stats(&agent_id, |s| s.times_removed += 1);
         emit_event(
             "heto",
             "1.0.0",
             "agent_removed",
-            json!([{ "startup_id": startup_id, "agent": agent_id }]),
+            json!([{ "startup_id": startup_id, "agent": agent_id,
+                     "by": env::predecessor_account_id() }]),
         );
     }
 
     /// An AI agent pays someone from the agent budget bucket. Returns `true` if the payment was
     /// made, `false` if the agent's rules refused it. Either way an event records what happened
     /// and why, so the dashboard can show approvals and refusals. A refusal changes no balances.
-    /// Callers who are not registered agents of this startup panic.
+    /// Callers who are not registered agents of this startup panic. While on probation an agent
+    /// may use only `PROBATION_BPS` of its limits.
     pub fn agent_spend(
         &mut self,
         startup_id: StartupId,
@@ -704,7 +813,8 @@ impl Contract {
         );
         require!(!amount.is_zero(), "Amount must be above zero");
 
-        let today = env::block_timestamp() / NANOS_PER_DAY;
+        let now = env::block_timestamp();
+        let today = now / NANOS_PER_DAY;
         if agent.day != today {
             agent.day = today;
             agent.spent_today = NearToken::from_yoctonear(0);
@@ -714,12 +824,35 @@ impl Contract {
             .as_yoctonear()
             .saturating_add(amount.as_yoctonear());
 
+        let on_probation = now < agent.probation_until;
+        let (per_tx_limit, daily_limit) = if on_probation {
+            (
+                bps_of(agent.per_tx_cap.as_yoctonear(), PROBATION_BPS),
+                bps_of(agent.daily_cap.as_yoctonear(), PROBATION_BPS),
+            )
+        } else {
+            (
+                agent.per_tx_cap.as_yoctonear(),
+                agent.daily_cap.as_yoctonear(),
+            )
+        };
+
         let refusal = if !agent.active {
             Some("agent_paused")
-        } else if amount > agent.per_tx_cap {
-            Some("over_per_payment_cap")
-        } else if spent_after > agent.daily_cap.as_yoctonear() {
-            Some("over_daily_cap")
+        } else if amount.as_yoctonear() > per_tx_limit {
+            Some(if on_probation && amount <= agent.per_tx_cap {
+                "probation_per_payment_cap"
+            } else {
+                "over_per_payment_cap"
+            })
+        } else if spent_after > daily_limit {
+            Some(
+                if on_probation && spent_after <= agent.daily_cap.as_yoctonear() {
+                    "probation_daily_cap"
+                } else {
+                    "over_daily_cap"
+                },
+            )
         } else if !agent.payees.contains(&to) {
             Some("payee_not_allowed")
         } else if amount > startup.agent_balance {
@@ -742,11 +875,16 @@ impl Contract {
                     "reason": reason,
                 }]),
             );
+            self.update_stats(&caller, |s| s.spends_refused += 1);
             return false;
         }
 
         agent.spent_today = NearToken::from_yoctonear(spent_after);
         startup.agent_balance = startup.agent_balance.saturating_sub(amount);
+        self.update_stats(&caller, |s| {
+            s.spends_ok += 1;
+            s.total_spent = s.total_spent.saturating_add(amount);
+        });
         emit_event(
             "heto",
             "1.0.0",
@@ -785,6 +923,15 @@ impl Contract {
             .iter()
             .find(|a| a.account_id == agent_id)
             .cloned()
+    }
+
+    /// What this contract has seen the account do as an agent, across all startups. Read it
+    /// before hiring: no history, many refusals, or past firings are all worth a look.
+    pub fn get_agent_reputation(&self, account_id: AccountId) -> AgentStats {
+        self.agent_stats
+            .get(&account_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// What `claim` would pay this account right now.

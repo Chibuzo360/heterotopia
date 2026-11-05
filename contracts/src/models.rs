@@ -20,6 +20,11 @@ pub const MAX_AGENTS: usize = 5;
 pub const MAX_PAYEES: usize = 10;
 /// Agent spending limits reset every UTC day.
 pub const NANOS_PER_DAY: u64 = 86_400_000_000_000;
+/// A newly hired agent is on probation for this many days...
+pub const PROBATION_DAYS: u64 = 3;
+/// ...and while on probation it can only use this part of its limits (10%).
+pub const PROBATION_BPS: u32 = 1_000;
+pub const MAX_MANAGER_ROLES: usize = 5;
 
 /// What the founder passes in for each tier when creating a startup.
 #[near(serializers = [json])]
@@ -109,8 +114,13 @@ pub struct Agent {
     pub daily_cap: NearToken,
     /// The agent can only pay these accounts.
     pub payees: Vec<AccountId>,
-    /// Kill switch: the founder can pause an agent at any time.
+    /// Kill switch: the founder or a manager can pause an agent at any time.
     pub active: bool,
+    /// Who hired it (the founder, or a manager holding a manager role).
+    pub hired_by: AccountId,
+    /// Until this time (nanoseconds) the agent is on probation and may use only a part of its
+    /// limits. 0 means it has been promoted (or probation is over).
+    pub probation_until: u64,
     /// The UTC day number `spent_today` refers to.
     pub day: u64,
     pub spent_today: NearToken,
@@ -139,7 +149,44 @@ pub struct Startup {
     /// Sum of the weights of all active role NFTs.
     pub total_role_weight: u64,
     pub agents: Vec<Agent>,
+    /// Role names (for example "CTO") whose active holders may hire, pause, promote and fire
+    /// agents. The founder always can.
+    pub manager_roles: Vec<String>,
+    /// Managers cannot give an agent more than this per payment...
+    pub manager_max_per_tx: NearToken,
+    /// ...or more than this per day. The founder is not bound by these.
+    pub manager_max_daily: NearToken,
     pub status: StartupStatus,
+}
+
+/// What this contract has seen an agent account do, across ALL startups. These are raw facts,
+/// not a score: a hiring founder reads them and decides.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentStats {
+    /// Times a startup hired this account.
+    pub startups_served: u32,
+    pub spends_ok: u64,
+    /// Payments its rules refused (a high number means it keeps trying things it should not).
+    pub spends_refused: u64,
+    pub total_spent: NearToken,
+    /// Times it was paused with the kill switch.
+    pub times_paused: u32,
+    /// Times a startup fired it.
+    pub times_removed: u32,
+}
+
+impl Default for AgentStats {
+    fn default() -> Self {
+        Self {
+            startups_served: 0,
+            spends_ok: 0,
+            spends_refused: 0,
+            total_spent: NearToken::from_yoctonear(0),
+            times_paused: 0,
+            times_removed: 0,
+        }
+    }
 }
 
 #[near(serializers = [borsh, json])]

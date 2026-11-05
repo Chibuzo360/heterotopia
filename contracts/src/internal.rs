@@ -67,9 +67,48 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("Startup not found"));
         require!(
             env::predecessor_account_id() == startup.founder,
-            "Only the founder can manage agents"
+            "Only the founder can do this"
         );
         startup
+    }
+
+    /// Panics unless the caller may manage this startup's agents: the founder, or someone holding
+    /// an existing role NFT of this startup whose role name is in `manager_roles`. Returns `true`
+    /// when the caller is the founder (who is not bound by the manager limits).
+    pub(crate) fn require_agent_admin(&self, startup_id: StartupId) -> bool {
+        let startup = self
+            .startups
+            .get(&startup_id)
+            .unwrap_or_else(|| env::panic_str("Startup not found"));
+        let caller = env::predecessor_account_id();
+        if caller == startup.founder {
+            return true;
+        }
+        let is_manager = self
+            .tokens_per_owner
+            .get(&caller)
+            .map(|ids| {
+                ids.iter().any(|id| {
+                    self.tokens.get(id).is_some_and(|t| {
+                        t.startup_id == startup_id
+                            && matches!(&t.kind, TokenKind::Role { role, .. }
+                                if startup.manager_roles.contains(role))
+                    })
+                })
+            })
+            .unwrap_or(false);
+        require!(
+            is_manager,
+            "Only the founder or an agent manager can do this"
+        );
+        false
+    }
+
+    /// Update an agent account's global record.
+    pub(crate) fn update_stats(&mut self, agent_id: &AccountId, f: impl FnOnce(&mut AgentStats)) {
+        let mut stats = self.agent_stats.get(agent_id).cloned().unwrap_or_default();
+        f(&mut stats);
+        self.agent_stats.insert(agent_id.clone(), stats);
     }
 
     /// The ONLY place a token changes owner. Every transfer entry point (today `nft_transfer`,
