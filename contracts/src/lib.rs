@@ -24,7 +24,7 @@ mod tests;
 pub use models::*;
 
 use events::{emit, emit_event};
-use internal::{accrual, bps_of, validate_media, validate_policy};
+use internal::{accrual, bps_of, has_shareholders, validate_media, validate_policy};
 use near_sdk::json_types::U128;
 use near_sdk::serde_json::json;
 use near_sdk::store::{IterableMap, LookupMap};
@@ -41,6 +41,7 @@ enum StorageKey {
     OwnerTokens,
     Balances,
     AgentStats,
+    Jobs,
 }
 
 #[near(contract_state)]
@@ -62,6 +63,9 @@ pub struct Contract {
     balances: LookupMap<AccountId, NearToken>,
     /// Every agent account's record across all startups.
     agent_stats: LookupMap<AccountId, AgentStats>,
+    next_job_id: JobId,
+    /// Paid jobs held in escrow (and finished ones, kept as a record).
+    jobs: IterableMap<JobId, Job>,
 }
 
 #[near]
@@ -83,6 +87,8 @@ impl Contract {
             tokens_per_owner: LookupMap::new(StorageKey::OwnerTokens),
             balances: LookupMap::new(StorageKey::Balances),
             agent_stats: LookupMap::new(StorageKey::AgentStats),
+            next_job_id: 1,
+            jobs: IterableMap::new(StorageKey::Jobs),
         }
     }
 
@@ -404,90 +410,7 @@ impl Contract {
     pub fn deposit_revenue(&mut self, startup_id: StartupId) {
         let deposit = env::attached_deposit();
         require!(!deposit.is_zero(), "Attach revenue to deposit");
-        let amount = deposit.as_yoctonear();
-        let fee = bps_of(amount, self.platform_fee_bps);
-        let net = amount - fee;
-        let platform = self.platform_account.clone();
-
-        let startup = self
-            .startups
-            .get_mut(&startup_id)
-            .unwrap_or_else(|| env::panic_str("Startup not found"));
-        require!(
-            startup.status == StartupStatus::Active,
-            "Startup is migrated and frozen"
-        );
-
-        let a = startup.allocation.clone();
-        let agent = bps_of(net, a.agent_bps);
-        let ops = bps_of(net, a.ops_bps);
-        let holders = net - agent - ops;
-        // With no active role, the role pool's part goes to shareholders instead.
-        let role_part = if startup.total_role_weight > 0 {
-            bps_of(holders, a.role_bps)
-        } else {
-            0
-        };
-        let share_part = holders - role_part;
-
-        let total_weight: u128 = startup
-            .tiers
-            .iter()
-            .map(|t| t.weight as u128 * t.minted as u128)
-            .sum();
-        require!(total_weight > 0, "No shareholders yet");
-
-        // Each NFT of tier t earns `share_part * weight_t / total_weight`, so a tier's total is
-        // proportional to (weight x NFTs minted) and the tiers add up to `share_part`. Integer
-        // division can leave a few yoctoNEAR of dust in the contract, which is harmless.
-        for tier in startup.tiers.iter_mut().filter(|t| t.minted > 0) {
-            let increment = share_part
-                .checked_mul(tier.weight as u128)
-                .unwrap_or_else(|| env::panic_str("Revenue amount too large"))
-                / total_weight;
-            tier.acc_per_nft = tier
-                .acc_per_nft
-                .checked_add(NearToken::from_yoctonear(increment))
-                .unwrap_or_else(|| env::panic_str("Accumulator overflow"));
-        }
-        if role_part > 0 {
-            let increment = role_part / startup.total_role_weight as u128;
-            startup.role_acc = startup
-                .role_acc
-                .checked_add(NearToken::from_yoctonear(increment))
-                .unwrap_or_else(|| env::panic_str("Accumulator overflow"));
-        }
-        startup.agent_balance = startup
-            .agent_balance
-            .checked_add(NearToken::from_yoctonear(agent))
-            .unwrap_or_else(|| env::panic_str("Agent balance overflow"));
-        startup.ops_balance = startup
-            .ops_balance
-            .checked_add(NearToken::from_yoctonear(ops))
-            .unwrap_or_else(|| env::panic_str("Operations balance overflow"));
-        startup.revenue = startup
-            .revenue
-            .checked_add(deposit)
-            .unwrap_or_else(|| env::panic_str("Revenue overflow"));
-
-        if fee > 0 {
-            let _ = Promise::new(platform).transfer(NearToken::from_yoctonear(fee));
-        }
-        emit_event(
-            "heto",
-            "1.0.0",
-            "revenue_deposit",
-            json!([{
-                "startup_id": startup_id,
-                "payer": env::predecessor_account_id(),
-                "amount": amount.to_string(),
-                "platform_fee": fee.to_string(),
-                "shareholders": share_part.to_string(),
-                "role_pool": role_part.to_string(),
-                "agent_budget": agent.to_string(),
-                "operations": ops.to_string(),
-            }]),
-        );
+        self.internal_revenue(startup_id, env::predecessor_account_id(), deposit);
     }
 
     /// Pays the caller everything they have earned: revenue settled from shares they sold or
@@ -901,6 +824,193 @@ impl Contract {
         true
     }
 
+    // ------------------------------------------------------------- jobs (escrow)
+
+    /// A customer pays a startup to do a piece of work. The money is HELD by the contract, in none
+    /// of the startup's buckets, until the work is delivered and accepted (or settles by itself).
+    /// `work_secs`: how long the swarm has to deliver (1 minute to 30 days). `review_secs`: how
+    /// long the customer has to look at a delivery before it settles by itself (1 minute to 7
+    /// days, default 24 hours).
+    #[payable]
+    pub fn create_job(
+        &mut self,
+        startup_id: StartupId,
+        description: String,
+        work_secs: u64,
+        review_secs: Option<u64>,
+    ) -> JobId {
+        let amount = env::attached_deposit();
+        require!(!amount.is_zero(), "Attach payment for the job");
+        require!(
+            !description.trim().is_empty() && description.len() <= MAX_JOB_TEXT,
+            "Description must be 1-280 characters"
+        );
+        require!(
+            (MIN_WORK_SECS..=MAX_WORK_SECS).contains(&work_secs),
+            "Work time must be 1 minute to 30 days"
+        );
+        let review_secs = review_secs.unwrap_or(DEFAULT_REVIEW_SECS);
+        require!(
+            (MIN_REVIEW_SECS..=MAX_REVIEW_SECS).contains(&review_secs),
+            "Review window must be 1 minute to 7 days"
+        );
+        let startup = self
+            .startups
+            .get(&startup_id)
+            .unwrap_or_else(|| env::panic_str("Startup not found"));
+        require!(
+            startup.status == StartupStatus::Active,
+            "Startup is migrated and frozen"
+        );
+        require!(has_shareholders(startup), "Startup has no shareholders yet");
+
+        let now = env::block_timestamp_ms();
+        let id = self.next_job_id;
+        self.next_job_id += 1;
+        let customer = env::predecessor_account_id();
+        let deadline_ms = now + work_secs * 1_000;
+        self.jobs.insert(
+            id,
+            Job {
+                id,
+                startup_id,
+                customer: customer.clone(),
+                description,
+                amount,
+                created_at_ms: now,
+                deadline_ms,
+                review_ms: review_secs * 1_000,
+                status: JobStatus::Open,
+                agent: None,
+                result: None,
+                delivered_at_ms: 0,
+                dispute_reason: None,
+            },
+        );
+        emit_event(
+            "heto",
+            "1.0.0",
+            "job_created",
+            json!([{ "job_id": id, "startup_id": startup_id, "customer": customer,
+                     "amount": amount.as_yoctonear().to_string(), "deadline_ms": deadline_ms }]),
+        );
+        id
+    }
+
+    /// A registered, active agent of the job's startup delivers the work: `result` is a short
+    /// text or a link to the output. Only possible before the deadline.
+    pub fn submit_result(&mut self, job_id: JobId, result: String) {
+        let caller = env::predecessor_account_id();
+        let mut job = self.job_or_panic(job_id);
+        require!(job.status == JobStatus::Open, "Job is not open for work");
+        let now = env::block_timestamp_ms();
+        require!(now <= job.deadline_ms, "The deadline has passed");
+        let startup = self
+            .startups
+            .get(&job.startup_id)
+            .unwrap_or_else(|| env::panic_str("Startup not found"));
+        let agent = startup
+            .agents
+            .iter()
+            .find(|a| a.account_id == caller)
+            .unwrap_or_else(|| env::panic_str("Not a registered agent of this startup"));
+        require!(agent.active, "Agent is paused");
+        require!(
+            !result.trim().is_empty() && result.len() <= MAX_JOB_TEXT,
+            "Result must be 1-280 characters"
+        );
+        job.status = JobStatus::Delivered;
+        job.agent = Some(caller.clone());
+        job.result = Some(result);
+        job.delivered_at_ms = now;
+        self.jobs.insert(job_id, job);
+        emit_event(
+            "heto",
+            "1.0.0",
+            "job_delivered",
+            json!([{ "job_id": job_id, "agent": caller }]),
+        );
+    }
+
+    /// The customer is happy: the payment becomes revenue and is split as usual.
+    pub fn accept_job(&mut self, job_id: JobId) {
+        let job = self.job_or_panic(job_id);
+        require!(
+            env::predecessor_account_id() == job.customer,
+            "Only the customer can accept"
+        );
+        require!(job.status == JobStatus::Delivered, "Nothing delivered yet");
+        self.pay_out_job(job);
+    }
+
+    /// The customer is not happy. Allowed only inside the review window. The money stays locked
+    /// until the platform account (the testnet arbiter) rules on it.
+    pub fn reject_job(&mut self, job_id: JobId, reason: String) {
+        let mut job = self.job_or_panic(job_id);
+        require!(
+            env::predecessor_account_id() == job.customer,
+            "Only the customer can reject"
+        );
+        require!(job.status == JobStatus::Delivered, "Nothing delivered yet");
+        require!(
+            env::block_timestamp_ms() <= job.delivered_at_ms + job.review_ms,
+            "The review window has closed"
+        );
+        require!(
+            !reason.trim().is_empty() && reason.len() <= MAX_JOB_TEXT,
+            "Reason must be 1-280 characters"
+        );
+        job.status = JobStatus::Disputed;
+        job.dispute_reason = Some(reason);
+        self.jobs.insert(job_id, job);
+        emit_event(
+            "heto",
+            "1.0.0",
+            "job_disputed",
+            json!([{ "job_id": job_id }]),
+        );
+    }
+
+    /// Anyone may call this once the review window has passed with no answer from the customer:
+    /// the delivery is treated as accepted. This is what lets a customer go to sleep.
+    pub fn settle_job(&mut self, job_id: JobId) {
+        let job = self.job_or_panic(job_id);
+        require!(job.status == JobStatus::Delivered, "Nothing delivered yet");
+        require!(
+            env::block_timestamp_ms() > job.delivered_at_ms + job.review_ms,
+            "The review window is still open"
+        );
+        self.pay_out_job(job);
+    }
+
+    /// Anyone may call this once the deadline has passed with nothing delivered. The whole
+    /// payment goes back to the customer, with no platform fee.
+    pub fn refund_job(&mut self, job_id: JobId) {
+        let job = self.job_or_panic(job_id);
+        require!(job.status == JobStatus::Open, "Job is not waiting for work");
+        require!(
+            env::block_timestamp_ms() > job.deadline_ms,
+            "The deadline has not passed"
+        );
+        self.refund_job_internal(job, "no_delivery");
+    }
+
+    /// The platform account decides a disputed job: `pay_startup = true` treats the work as
+    /// accepted, `false` refunds the customer. A testnet stand-in for a real reviewer.
+    pub fn resolve_dispute(&mut self, job_id: JobId, pay_startup: bool) {
+        require!(
+            env::predecessor_account_id() == self.platform_account,
+            "Only the platform account can resolve disputes"
+        );
+        let job = self.job_or_panic(job_id);
+        require!(job.status == JobStatus::Disputed, "Job is not disputed");
+        if pay_startup {
+            self.pay_out_job(job);
+        } else {
+            self.refund_job_internal(job, "dispute_for_customer");
+        }
+    }
+
     // ------------------------------------------------------------------- views
 
     pub fn get_startup(&self, startup_id: StartupId) -> Option<Startup> {
@@ -923,6 +1033,27 @@ impl Contract {
             .iter()
             .find(|a| a.account_id == agent_id)
             .cloned()
+    }
+
+    pub fn get_job(&self, job_id: JobId) -> Option<Job> {
+        self.jobs.get(&job_id).cloned()
+    }
+
+    /// Jobs, oldest first; pass `startup_id` to see only one startup's jobs.
+    pub fn get_jobs(
+        &self,
+        startup_id: Option<StartupId>,
+        from_index: Option<u64>,
+        limit: Option<u64>,
+    ) -> Vec<Job> {
+        self.jobs
+            .iter()
+            .map(|(_, j)| j)
+            .filter(|j| startup_id.is_none_or(|id| j.startup_id == id))
+            .skip(from_index.unwrap_or(0) as usize)
+            .take(limit.unwrap_or(20) as usize)
+            .cloned()
+            .collect()
     }
 
     /// What this contract has seen the account do as an agent, across all startups. Read it

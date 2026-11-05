@@ -1247,3 +1247,485 @@ fn refusals_by_a_paused_agent_still_count() {
     assert!(!spend(&mut c, stranger(), near(1), 1));
     assert_eq!(c.get_agent_reputation(agent()).spends_refused, 1);
 }
+
+// ------------------------------------------------------------------ jobs (escrow)
+
+const SEC: u64 = 1_000_000_000;
+
+fn ctx_full(predecessor: AccountId, deposit: NearToken, ts: u64) {
+    let mut b = VMContextBuilder::new();
+    b.current_account_id(accounts(0))
+        .predecessor_account_id(predecessor.clone())
+        .signer_account_id(predecessor)
+        .attached_deposit(deposit)
+        .block_timestamp(ts);
+    testing_env!(b.build());
+}
+
+/// Startup 1 (50% agent budget, 50% holders, no ops) with one share held by `investor()` and one
+/// agent hired. Nothing in any bucket yet.
+fn job_env(fee_bps: u32) -> Contract {
+    let mut c = setup_with(fee_bps, Some(alloc(5_000, 5_000, 0, 0)));
+    buy(&mut c, investor(), 0, near(1));
+    set_ctx(founder(), zero());
+    c.register_agent(1, agent(), "Bot".into(), near(1), near(3), vec![stranger()]);
+    c
+}
+
+/// The customer pays 4 NEAR at t=100s. Work deadline t=3700s, review window 600s.
+fn open_job(c: &mut Contract) -> JobId {
+    ctx_full(payer(), near(4), 100 * SEC);
+    c.create_job(1, "Write a launch post".into(), 3600, Some(600))
+}
+
+fn deliver(c: &mut Contract, id: JobId, at_secs: u64) {
+    ctx_full(agent(), zero(), at_secs * SEC);
+    c.submit_result(id, "https://example.org/post".into());
+}
+
+/// Delivered at t=200s, so the review window closes at t=800s.
+fn delivered_job(c: &mut Contract) -> JobId {
+    let id = open_job(c);
+    deliver(c, id, 200);
+    id
+}
+
+fn status(c: &Contract, id: JobId) -> JobStatus {
+    c.get_job(id).unwrap().status
+}
+
+#[test]
+fn paying_for_a_job_holds_the_money_in_no_bucket() {
+    let mut c = job_env(0);
+    let id = open_job(&mut c);
+    let job = c.get_job(id).unwrap();
+    assert_eq!(job.status, JobStatus::Open);
+    assert_eq!(job.amount, near(4));
+    assert_eq!(job.customer, payer());
+    assert_eq!(job.deadline_ms, 100_000 + 3_600_000);
+    assert_eq!(job.review_ms, 600_000);
+    let s = c.get_startup(1).unwrap();
+    assert_eq!(s.agent_balance, zero());
+    assert_eq!(s.revenue, zero(), "not revenue until the work is accepted");
+    assert!(last_log().contains("job_created"));
+}
+
+#[test]
+fn review_window_defaults_to_a_day() {
+    let mut c = job_env(0);
+    ctx_full(payer(), near(1), 0);
+    let id = c.create_job(1, "Task".into(), 3600, None);
+    assert_eq!(c.get_job(id).unwrap().review_ms, 86_400_000);
+}
+
+#[test]
+#[should_panic(expected = "Attach payment for the job")]
+fn job_needs_a_payment() {
+    let mut c = job_env(0);
+    ctx_full(payer(), zero(), 0);
+    c.create_job(1, "Task".into(), 3600, None);
+}
+
+#[test]
+#[should_panic(expected = "Description must be 1-280 characters")]
+fn job_needs_a_description() {
+    let mut c = job_env(0);
+    ctx_full(payer(), near(1), 0);
+    c.create_job(1, "  ".into(), 3600, None);
+}
+
+#[test]
+#[should_panic(expected = "Work time must be 1 minute to 30 days")]
+fn work_time_has_a_floor() {
+    let mut c = job_env(0);
+    ctx_full(payer(), near(1), 0);
+    c.create_job(1, "Task".into(), 10, None);
+}
+
+#[test]
+#[should_panic(expected = "Work time must be 1 minute to 30 days")]
+fn work_time_has_a_ceiling() {
+    let mut c = job_env(0);
+    ctx_full(payer(), near(1), 0);
+    c.create_job(1, "Task".into(), 31 * 86_400, None);
+}
+
+#[test]
+#[should_panic(expected = "Review window must be 1 minute to 7 days")]
+fn review_window_has_a_floor() {
+    let mut c = job_env(0);
+    ctx_full(payer(), near(1), 0);
+    c.create_job(1, "Task".into(), 3600, Some(5));
+}
+
+#[test]
+#[should_panic(expected = "Startup has no shareholders yet")]
+fn job_needs_a_startup_with_shareholders() {
+    let mut c = setup_with(0, None);
+    ctx_full(payer(), near(1), 0);
+    c.create_job(1, "Task".into(), 3600, None);
+}
+
+#[test]
+#[should_panic(expected = "Startup is migrated and frozen")]
+fn job_is_blocked_on_a_migrated_startup() {
+    let mut c = job_env(0);
+    set_ctx(founder(), zero());
+    c.mark_migrated(1, accounts(4));
+    open_job(&mut c);
+}
+
+#[test]
+#[should_panic(expected = "Startup not found")]
+fn job_for_an_unknown_startup_panics() {
+    let mut c = job_env(0);
+    ctx_full(payer(), near(1), 0);
+    c.create_job(9, "Task".into(), 3600, None);
+}
+
+#[test]
+fn agent_delivers_a_result() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    let job = c.get_job(id).unwrap();
+    assert_eq!(job.status, JobStatus::Delivered);
+    assert_eq!(job.agent, Some(agent()));
+    assert_eq!(job.delivered_at_ms, 200_000);
+    assert!(job.result.unwrap().starts_with("https://"));
+    assert!(last_log().contains("job_delivered"));
+}
+
+#[test]
+#[should_panic(expected = "Not a registered agent of this startup")]
+fn strangers_cannot_deliver() {
+    let mut c = job_env(0);
+    let id = open_job(&mut c);
+    ctx_full(stranger(), zero(), 200 * SEC);
+    c.submit_result(id, "done".into());
+}
+
+#[test]
+#[should_panic(expected = "Not a registered agent of this startup")]
+fn the_customer_cannot_deliver_their_own_job() {
+    let mut c = job_env(0);
+    let id = open_job(&mut c);
+    ctx_full(payer(), zero(), 200 * SEC);
+    c.submit_result(id, "done".into());
+}
+
+#[test]
+#[should_panic(expected = "Agent is paused")]
+fn a_paused_agent_cannot_deliver() {
+    let mut c = job_env(0);
+    let id = open_job(&mut c);
+    set_ctx(founder(), zero());
+    c.set_agent_active(1, agent(), false);
+    deliver(&mut c, id, 200);
+}
+
+#[test]
+#[should_panic(expected = "The deadline has passed")]
+fn cannot_deliver_after_the_deadline() {
+    let mut c = job_env(0);
+    let id = open_job(&mut c);
+    deliver(&mut c, id, 3_701);
+}
+
+#[test]
+#[should_panic(expected = "Job is not open for work")]
+fn cannot_deliver_twice() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    deliver(&mut c, id, 300);
+}
+
+#[test]
+#[should_panic(expected = "Result must be 1-280 characters")]
+fn a_delivery_needs_a_result() {
+    let mut c = job_env(0);
+    let id = open_job(&mut c);
+    ctx_full(agent(), zero(), 200 * SEC);
+    c.submit_result(id, "".into());
+}
+
+#[test]
+fn accepting_turns_the_payment_into_revenue_with_the_usual_split() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(payer(), zero(), 300 * SEC);
+    c.accept_job(id);
+    assert_eq!(status(&c, id), JobStatus::Paid);
+    let s = c.get_startup(1).unwrap();
+    assert_eq!(s.revenue, near(4));
+    assert_eq!(s.agent_balance, near(2));
+    assert_eq!(s.tiers[0].acc_per_nft, near(2));
+    assert!(get_created_receipts().is_empty(), "no fee, nothing leaves");
+    assert!(last_log().contains("job_paid"));
+}
+
+#[test]
+fn accepting_pays_the_platform_fee() {
+    let mut c = job_env(100);
+    let id = delivered_job(&mut c);
+    ctx_full(payer(), zero(), 300 * SEC);
+    c.accept_job(id);
+    assert_eq!(get_created_receipts().len(), 1, "one transfer: the 1% fee");
+    assert_eq!(
+        c.get_startup(1).unwrap().agent_balance,
+        NearToken::from_millinear(1_980)
+    );
+}
+
+#[test]
+fn the_payer_in_the_revenue_event_is_the_customer() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(payer(), zero(), 300 * SEC);
+    c.accept_job(id);
+    let logs = near_sdk::test_utils::get_logs().join("\n");
+    assert!(logs.contains("revenue_deposit"));
+    assert!(logs.contains(payer().as_str()));
+}
+
+#[test]
+#[should_panic(expected = "Only the customer can accept")]
+fn only_the_customer_accepts() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(founder(), zero(), 300 * SEC);
+    c.accept_job(id);
+}
+
+#[test]
+#[should_panic(expected = "Nothing delivered yet")]
+fn cannot_accept_before_delivery() {
+    let mut c = job_env(0);
+    let id = open_job(&mut c);
+    ctx_full(payer(), zero(), 300 * SEC);
+    c.accept_job(id);
+}
+
+#[test]
+#[should_panic(expected = "Nothing delivered yet")]
+fn cannot_accept_twice() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(payer(), zero(), 300 * SEC);
+    c.accept_job(id);
+    c.accept_job(id);
+}
+
+#[test]
+#[should_panic(expected = "The review window is still open")]
+fn nobody_can_settle_during_the_review_window() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(stranger(), zero(), 700 * SEC);
+    c.settle_job(id);
+}
+
+#[test]
+fn anyone_can_settle_after_the_review_window() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(stranger(), zero(), 801 * SEC);
+    c.settle_job(id);
+    assert_eq!(status(&c, id), JobStatus::Paid);
+    assert_eq!(c.get_startup(1).unwrap().revenue, near(4));
+}
+
+#[test]
+#[should_panic(expected = "Nothing delivered yet")]
+fn cannot_settle_an_undelivered_job() {
+    let mut c = job_env(0);
+    let id = open_job(&mut c);
+    ctx_full(stranger(), zero(), 9_000 * SEC);
+    c.settle_job(id);
+}
+
+#[test]
+fn customer_can_reject_inside_the_window_and_the_money_stays_locked() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(payer(), zero(), 300 * SEC);
+    c.reject_job(id, "Not what I asked for".into());
+    let job = c.get_job(id).unwrap();
+    assert_eq!(job.status, JobStatus::Disputed);
+    assert_eq!(job.dispute_reason.as_deref(), Some("Not what I asked for"));
+    assert_eq!(c.get_startup(1).unwrap().revenue, zero());
+    assert!(get_created_receipts().is_empty());
+    assert!(last_log().contains("job_disputed"));
+}
+
+#[test]
+#[should_panic(expected = "The review window has closed")]
+fn cannot_reject_after_the_window() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(payer(), zero(), 801 * SEC);
+    c.reject_job(id, "Too late".into());
+}
+
+#[test]
+#[should_panic(expected = "Only the customer can reject")]
+fn only_the_customer_rejects() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(stranger(), zero(), 300 * SEC);
+    c.reject_job(id, "No".into());
+}
+
+#[test]
+#[should_panic(expected = "Reason must be 1-280 characters")]
+fn a_rejection_needs_a_reason() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(payer(), zero(), 300 * SEC);
+    c.reject_job(id, "".into());
+}
+
+#[test]
+#[should_panic(expected = "Nothing delivered yet")]
+fn a_disputed_job_cannot_be_settled_by_waiting() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(payer(), zero(), 300 * SEC);
+    c.reject_job(id, "No".into());
+    ctx_full(stranger(), zero(), 9_000 * SEC);
+    c.settle_job(id);
+}
+
+#[test]
+fn arbiter_can_rule_for_the_startup() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(payer(), zero(), 300 * SEC);
+    c.reject_job(id, "No".into());
+    ctx_full(platform(), zero(), 400 * SEC);
+    c.resolve_dispute(id, true);
+    assert_eq!(status(&c, id), JobStatus::Paid);
+    assert_eq!(c.get_startup(1).unwrap().agent_balance, near(2));
+}
+
+#[test]
+fn arbiter_can_rule_for_the_customer() {
+    let mut c = job_env(100);
+    let id = delivered_job(&mut c);
+    ctx_full(payer(), zero(), 300 * SEC);
+    c.reject_job(id, "No".into());
+    ctx_full(platform(), zero(), 400 * SEC);
+    c.resolve_dispute(id, false);
+    assert_eq!(status(&c, id), JobStatus::Refunded);
+    assert_eq!(get_created_receipts().len(), 1, "one transfer: the refund");
+    assert_eq!(c.get_startup(1).unwrap().revenue, zero());
+}
+
+#[test]
+#[should_panic(expected = "Only the platform account can resolve disputes")]
+fn only_the_platform_resolves_disputes() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(payer(), zero(), 300 * SEC);
+    c.reject_job(id, "No".into());
+    ctx_full(founder(), zero(), 400 * SEC);
+    c.resolve_dispute(id, true);
+}
+
+#[test]
+#[should_panic(expected = "Job is not disputed")]
+fn only_disputed_jobs_can_be_resolved() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(platform(), zero(), 300 * SEC);
+    c.resolve_dispute(id, true);
+}
+
+#[test]
+fn no_delivery_by_the_deadline_means_a_full_refund_to_the_customer() {
+    let mut c = job_env(100);
+    let id = open_job(&mut c);
+    ctx_full(stranger(), zero(), 3_701 * SEC);
+    c.refund_job(id);
+    assert_eq!(status(&c, id), JobStatus::Refunded);
+    assert_eq!(get_created_receipts().len(), 1, "only the refund, no fee");
+    let s = c.get_startup(1).unwrap();
+    assert_eq!(s.revenue, zero());
+    assert_eq!(s.agent_balance, zero());
+    assert!(last_log().contains("no_delivery"));
+}
+
+#[test]
+#[should_panic(expected = "The deadline has not passed")]
+fn no_refund_before_the_deadline() {
+    let mut c = job_env(0);
+    let id = open_job(&mut c);
+    ctx_full(payer(), zero(), 3_000 * SEC);
+    c.refund_job(id);
+}
+
+#[test]
+#[should_panic(expected = "Job is not waiting for work")]
+fn no_refund_once_delivered() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    ctx_full(payer(), zero(), 9_000 * SEC);
+    c.refund_job(id);
+}
+
+#[test]
+#[should_panic(expected = "Job is not waiting for work")]
+fn cannot_refund_twice() {
+    let mut c = job_env(0);
+    let id = open_job(&mut c);
+    ctx_full(payer(), zero(), 3_701 * SEC);
+    c.refund_job(id);
+    c.refund_job(id);
+}
+
+#[test]
+fn a_migrated_startup_refunds_instead_of_taking_revenue() {
+    let mut c = job_env(0);
+    let id = delivered_job(&mut c);
+    set_ctx(founder(), zero());
+    c.mark_migrated(1, accounts(4));
+    ctx_full(payer(), zero(), 300 * SEC);
+    c.accept_job(id);
+    assert_eq!(status(&c, id), JobStatus::Refunded);
+    assert_eq!(get_created_receipts().len(), 1);
+    assert!(last_log().contains("startup_migrated"));
+}
+
+#[test]
+#[should_panic(expected = "Job not found")]
+fn unknown_job_panics() {
+    let mut c = job_env(0);
+    ctx_full(payer(), zero(), 0);
+    c.accept_job(42);
+}
+
+#[test]
+fn jobs_get_increasing_ids_and_can_be_listed_per_startup() {
+    let mut c = job_env(0);
+    set_ctx(founder(), zero());
+    let other = c.create_startup("Other".into(), tiers(), None, None);
+    set_ctx(investor(), near(1));
+    c.buy_share(other, 0);
+    let a = open_job(&mut c);
+    let b = open_job(&mut c);
+    ctx_full(payer(), near(1), 100 * SEC);
+    let d = c.create_job(other, "Other task".into(), 3600, None);
+    assert_eq!((a, b, d), (1, 2, 3));
+    assert_eq!(c.get_jobs(None, None, None).len(), 3);
+    assert_eq!(c.get_jobs(Some(1), None, None).len(), 2);
+    assert_eq!(c.get_jobs(Some(other), None, None)[0].id, 3);
+    assert_eq!(c.get_jobs(None, Some(1), Some(1))[0].id, 2);
+}
+
+#[test]
+fn deposit_revenue_still_works_the_same_way() {
+    let mut c = job_env(0);
+    deposit(&mut c, near(4));
+    let s = c.get_startup(1).unwrap();
+    assert_eq!(s.agent_balance, near(2));
+    assert_eq!(s.revenue, near(4));
+}

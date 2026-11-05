@@ -4,6 +4,7 @@ use near_sdk::{AccountId, NearToken, near, require};
 
 pub type StartupId = u64;
 pub type TokenId = String;
+pub type JobId = u64;
 
 pub const MAX_TIERS: usize = 8;
 /// Basis points: 10_000 = 100%.
@@ -25,6 +26,13 @@ pub const PROBATION_DAYS: u64 = 3;
 /// ...and while on probation it can only use this part of its limits (10%).
 pub const PROBATION_BPS: u32 = 1_000;
 pub const MAX_MANAGER_ROLES: usize = 5;
+/// Longest job description, result and dispute reason.
+pub const MAX_JOB_TEXT: usize = 280;
+pub const MIN_WORK_SECS: u64 = 60;
+pub const MAX_WORK_SECS: u64 = 30 * 86_400;
+pub const MIN_REVIEW_SECS: u64 = 60;
+pub const MAX_REVIEW_SECS: u64 = 7 * 86_400;
+pub const DEFAULT_REVIEW_SECS: u64 = 86_400;
 
 /// What the founder passes in for each tier when creating a startup.
 #[near(serializers = [json])]
@@ -222,4 +230,39 @@ pub struct Token {
 pub struct PlatformInfo {
     pub account_id: AccountId,
     pub fee_bps: u32,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub enum JobStatus {
+    /// Paid in and waiting for the swarm to deliver.
+    Open,
+    /// An agent delivered; the customer is reviewing (or the window is running).
+    Delivered,
+    /// The customer rejected the delivery; the platform arbiter decides.
+    Disputed,
+    /// Accepted (or settled by itself): the payment became startup revenue.
+    Paid,
+    /// The payment went back to the customer.
+    Refunded,
+}
+
+/// A paid job held in escrow. Times are milliseconds, so they stay exact in JSON.
+#[near(serializers = [borsh, json])]
+#[derive(Clone)]
+pub struct Job {
+    pub id: JobId,
+    pub startup_id: StartupId,
+    pub customer: AccountId,
+    pub description: String,
+    pub amount: NearToken,
+    pub created_at_ms: u64,
+    pub deadline_ms: u64,
+    /// How long after delivery the customer may accept or reject before it settles by itself.
+    pub review_ms: u64,
+    pub status: JobStatus,
+    pub agent: Option<AccountId>,
+    pub result: Option<String>,
+    pub delivered_at_ms: u64,
+    pub dispute_reason: Option<String>,
 }

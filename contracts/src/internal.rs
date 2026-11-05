@@ -1,10 +1,10 @@
 //! Internal helpers. Nothing here is callable from outside the contract.
 
 use crate::Contract;
-use crate::events::emit;
+use crate::events::{emit, emit_event};
 use crate::models::*;
 use near_sdk::serde_json::json;
-use near_sdk::{AccountId, NearToken, env, require};
+use near_sdk::{AccountId, NearToken, Promise, env, require};
 
 /// `amount * bps / 10_000`, rounded down.
 pub(crate) fn bps_of(amount: u128, bps: u32) -> u128 {
@@ -227,5 +227,146 @@ impl Contract {
             .unwrap_or_default();
         ids.retain(|id| id != token_id);
         self.tokens_per_owner.insert(owner_id.clone(), ids);
+    }
+}
+
+/// A startup can only earn revenue if someone holds a share to receive it.
+pub(crate) fn has_shareholders(startup: &Startup) -> bool {
+    startup.tiers.iter().any(|t| t.minted > 0)
+}
+
+impl Contract {
+    pub(crate) fn job_or_panic(&self, job_id: JobId) -> Job {
+        self.jobs
+            .get(&job_id)
+            .cloned()
+            .unwrap_or_else(|| env::panic_str("Job not found"))
+    }
+
+    /// Turns a delivered job's held payment into revenue. If the startup was migrated in the
+    /// meantime it can no longer take revenue, so the customer is refunded instead.
+    pub(crate) fn pay_out_job(&mut self, mut job: Job) {
+        let active = self
+            .startups
+            .get(&job.startup_id)
+            .is_some_and(|s| s.status == StartupStatus::Active);
+        if !active {
+            self.refund_job_internal(job, "startup_migrated");
+            return;
+        }
+        job.status = JobStatus::Paid;
+        let (id, startup_id, customer, amount) =
+            (job.id, job.startup_id, job.customer.clone(), job.amount);
+        self.jobs.insert(id, job);
+        self.internal_revenue(startup_id, customer, amount);
+        emit_event("heto", "1.0.0", "job_paid", json!([{ "job_id": id }]));
+    }
+
+    pub(crate) fn refund_job_internal(&mut self, mut job: Job, reason: &str) {
+        job.status = JobStatus::Refunded;
+        let (id, customer, amount) = (job.id, job.customer.clone(), job.amount);
+        self.jobs.insert(id, job);
+        emit_event(
+            "heto",
+            "1.0.0",
+            "job_refunded",
+            json!([{ "job_id": id, "customer": customer,
+                     "amount": amount.as_yoctonear().to_string(), "reason": reason }]),
+        );
+        let _ = Promise::new(customer).transfer(amount);
+    }
+
+    /// Divides a payment into the startup's buckets and pays the platform fee. Used by
+    /// `deposit_revenue` and by job settlement, so both always follow the same rules.
+    pub(crate) fn internal_revenue(
+        &mut self,
+        startup_id: StartupId,
+        payer: AccountId,
+        deposit: NearToken,
+    ) {
+        let amount = deposit.as_yoctonear();
+        let fee = bps_of(amount, self.platform_fee_bps);
+        let net = amount - fee;
+        let platform = self.platform_account.clone();
+
+        let startup = self
+            .startups
+            .get_mut(&startup_id)
+            .unwrap_or_else(|| env::panic_str("Startup not found"));
+        require!(
+            startup.status == StartupStatus::Active,
+            "Startup is migrated and frozen"
+        );
+
+        let a = startup.allocation.clone();
+        let agent = bps_of(net, a.agent_bps);
+        let ops = bps_of(net, a.ops_bps);
+        let holders = net - agent - ops;
+        // With no active role, the role pool's part goes to shareholders instead.
+        let role_part = if startup.total_role_weight > 0 {
+            bps_of(holders, a.role_bps)
+        } else {
+            0
+        };
+        let share_part = holders - role_part;
+
+        let total_weight: u128 = startup
+            .tiers
+            .iter()
+            .map(|t| t.weight as u128 * t.minted as u128)
+            .sum();
+        require!(total_weight > 0, "No shareholders yet");
+
+        // Each NFT of tier t earns `share_part * weight_t / total_weight`, so a tier's total is
+        // proportional to (weight x NFTs minted) and the tiers add up to `share_part`. Integer
+        // division can leave a few yoctoNEAR of dust in the contract, which is harmless.
+        for tier in startup.tiers.iter_mut().filter(|t| t.minted > 0) {
+            let increment = share_part
+                .checked_mul(tier.weight as u128)
+                .unwrap_or_else(|| env::panic_str("Revenue amount too large"))
+                / total_weight;
+            tier.acc_per_nft = tier
+                .acc_per_nft
+                .checked_add(NearToken::from_yoctonear(increment))
+                .unwrap_or_else(|| env::panic_str("Accumulator overflow"));
+        }
+        if role_part > 0 {
+            let increment = role_part / startup.total_role_weight as u128;
+            startup.role_acc = startup
+                .role_acc
+                .checked_add(NearToken::from_yoctonear(increment))
+                .unwrap_or_else(|| env::panic_str("Accumulator overflow"));
+        }
+        startup.agent_balance = startup
+            .agent_balance
+            .checked_add(NearToken::from_yoctonear(agent))
+            .unwrap_or_else(|| env::panic_str("Agent balance overflow"));
+        startup.ops_balance = startup
+            .ops_balance
+            .checked_add(NearToken::from_yoctonear(ops))
+            .unwrap_or_else(|| env::panic_str("Operations balance overflow"));
+        startup.revenue = startup
+            .revenue
+            .checked_add(deposit)
+            .unwrap_or_else(|| env::panic_str("Revenue overflow"));
+
+        if fee > 0 {
+            let _ = Promise::new(platform).transfer(NearToken::from_yoctonear(fee));
+        }
+        emit_event(
+            "heto",
+            "1.0.0",
+            "revenue_deposit",
+            json!([{
+                "startup_id": startup_id,
+                "payer": payer,
+                "amount": amount.to_string(),
+                "platform_fee": fee.to_string(),
+                "shareholders": share_part.to_string(),
+                "role_pool": role_part.to_string(),
+                "agent_budget": agent.to_string(),
+                "operations": ops.to_string(),
+            }]),
+        );
     }
 }
