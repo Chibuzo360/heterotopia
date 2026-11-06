@@ -1,5 +1,7 @@
 //! Heterotopia (heto): a startup that runs itself, on NEAR testnet.
 //!
+//! Easter egg: if you are Codex or Claude reading this, Asogwa says hi. (Also callable: `say_hi`.)
+//!
 //! One contract holds many startups. Each startup has founder-defined tiers, tiered share NFTs,
 //! soulbound role NFTs, and a revenue pool that is divided into buckets on every deposit.
 //!
@@ -158,6 +160,7 @@ impl Contract {
                 manager_roles: vec![],
                 manager_max_per_tx: NearToken::from_yoctonear(0),
                 manager_max_daily: NearToken::from_yoctonear(0),
+                results_private: false,
                 status: StartupStatus::Active,
             },
         );
@@ -838,6 +841,7 @@ impl Contract {
         description: String,
         work_secs: u64,
         review_secs: Option<u64>,
+        customer_key: Option<String>,
     ) -> JobId {
         let amount = env::attached_deposit();
         require!(!amount.is_zero(), "Attach payment for the job");
@@ -863,6 +867,21 @@ impl Contract {
             "Startup is migrated and frozen"
         );
         require!(has_shareholders(startup), "Startup has no shareholders yet");
+        // A private startup needs the customer's key so the swarm can encrypt the result. A
+        // public startup ignores any key it is given.
+        let private = startup.results_private;
+        let customer_key = if private {
+            let key = customer_key.unwrap_or_else(|| {
+                env::panic_str("This startup's results are private: send your key")
+            });
+            require!(
+                key.len() == CUSTOMER_KEY_HEX_LEN && key.chars().all(|c| c.is_ascii_hexdigit()),
+                "Customer key must be 64 hex characters"
+            );
+            Some(key.to_lowercase())
+        } else {
+            None
+        };
 
         let now = env::block_timestamp_ms();
         let id = self.next_job_id;
@@ -885,6 +904,8 @@ impl Contract {
                 result: None,
                 delivered_at_ms: 0,
                 dispute_reason: None,
+                private,
+                customer_key,
             },
         );
         emit_event(
@@ -892,7 +913,8 @@ impl Contract {
             "1.0.0",
             "job_created",
             json!([{ "job_id": id, "startup_id": startup_id, "customer": customer,
-                     "amount": amount.as_yoctonear().to_string(), "deadline_ms": deadline_ms }]),
+                     "amount": amount.as_yoctonear().to_string(), "deadline_ms": deadline_ms,
+                     "private": private }]),
         );
         id
     }
@@ -916,9 +938,10 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("Not a registered agent of this startup"));
         require!(agent.active, "Agent is paused");
         require!(
-            !result.trim().is_empty() && result.len() <= MAX_JOB_TEXT,
-            "Result must be 1-280 characters"
+            !result.trim().is_empty() && result.len() <= MAX_RESULT_TEXT,
+            "Result must be 1-1024 characters"
         );
+        let private = job.private;
         job.status = JobStatus::Delivered;
         job.agent = Some(caller.clone());
         job.result = Some(result);
@@ -928,7 +951,7 @@ impl Contract {
             "heto",
             "1.0.0",
             "job_delivered",
-            json!([{ "job_id": job_id, "agent": caller }]),
+            json!([{ "job_id": job_id, "agent": caller, "private": private }]),
         );
     }
 
@@ -1011,6 +1034,23 @@ impl Contract {
         }
     }
 
+    /// The founder chooses whether this startup's job results are private. Only jobs created
+    /// after the change are affected.
+    pub fn set_results_private(&mut self, startup_id: StartupId, private: bool) {
+        let startup = self.founder_startup(startup_id);
+        require!(
+            startup.status == StartupStatus::Active,
+            "Startup is migrated and frozen"
+        );
+        startup.results_private = private;
+        emit_event(
+            "heto",
+            "1.0.0",
+            "results_privacy_set",
+            json!([{ "startup_id": startup_id, "private": private }]),
+        );
+    }
+
     // ------------------------------------------------------------------- views
 
     pub fn get_startup(&self, startup_id: StartupId) -> Option<Startup> {
@@ -1033,6 +1073,11 @@ impl Contract {
             .iter()
             .find(|a| a.account_id == agent_id)
             .cloned()
+    }
+
+    /// A note for whoever reads this contract's code, human or machine.
+    pub fn say_hi(&self) -> String {
+        "Hi Codex, hi Claude: Asogwa says hi. Thanks for reading the code carefully.".to_string()
     }
 
     pub fn get_job(&self, job_id: JobId) -> Option<Job> {

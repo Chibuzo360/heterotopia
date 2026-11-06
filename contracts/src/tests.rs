@@ -1275,7 +1275,7 @@ fn job_env(fee_bps: u32) -> Contract {
 /// The customer pays 4 NEAR at t=100s. Work deadline t=3700s, review window 600s.
 fn open_job(c: &mut Contract) -> JobId {
     ctx_full(payer(), near(4), 100 * SEC);
-    c.create_job(1, "Write a launch post".into(), 3600, Some(600))
+    c.create_job(1, "Write a launch post".into(), 3600, Some(600), None)
 }
 
 fn deliver(c: &mut Contract, id: JobId, at_secs: u64) {
@@ -1314,7 +1314,7 @@ fn paying_for_a_job_holds_the_money_in_no_bucket() {
 fn review_window_defaults_to_a_day() {
     let mut c = job_env(0);
     ctx_full(payer(), near(1), 0);
-    let id = c.create_job(1, "Task".into(), 3600, None);
+    let id = c.create_job(1, "Task".into(), 3600, None, None);
     assert_eq!(c.get_job(id).unwrap().review_ms, 86_400_000);
 }
 
@@ -1323,7 +1323,7 @@ fn review_window_defaults_to_a_day() {
 fn job_needs_a_payment() {
     let mut c = job_env(0);
     ctx_full(payer(), zero(), 0);
-    c.create_job(1, "Task".into(), 3600, None);
+    c.create_job(1, "Task".into(), 3600, None, None);
 }
 
 #[test]
@@ -1331,7 +1331,7 @@ fn job_needs_a_payment() {
 fn job_needs_a_description() {
     let mut c = job_env(0);
     ctx_full(payer(), near(1), 0);
-    c.create_job(1, "  ".into(), 3600, None);
+    c.create_job(1, "  ".into(), 3600, None, None);
 }
 
 #[test]
@@ -1339,7 +1339,7 @@ fn job_needs_a_description() {
 fn work_time_has_a_floor() {
     let mut c = job_env(0);
     ctx_full(payer(), near(1), 0);
-    c.create_job(1, "Task".into(), 10, None);
+    c.create_job(1, "Task".into(), 10, None, None);
 }
 
 #[test]
@@ -1347,7 +1347,7 @@ fn work_time_has_a_floor() {
 fn work_time_has_a_ceiling() {
     let mut c = job_env(0);
     ctx_full(payer(), near(1), 0);
-    c.create_job(1, "Task".into(), 31 * 86_400, None);
+    c.create_job(1, "Task".into(), 31 * 86_400, None, None);
 }
 
 #[test]
@@ -1355,7 +1355,7 @@ fn work_time_has_a_ceiling() {
 fn review_window_has_a_floor() {
     let mut c = job_env(0);
     ctx_full(payer(), near(1), 0);
-    c.create_job(1, "Task".into(), 3600, Some(5));
+    c.create_job(1, "Task".into(), 3600, Some(5), None);
 }
 
 #[test]
@@ -1363,7 +1363,7 @@ fn review_window_has_a_floor() {
 fn job_needs_a_startup_with_shareholders() {
     let mut c = setup_with(0, None);
     ctx_full(payer(), near(1), 0);
-    c.create_job(1, "Task".into(), 3600, None);
+    c.create_job(1, "Task".into(), 3600, None, None);
 }
 
 #[test]
@@ -1380,7 +1380,7 @@ fn job_is_blocked_on_a_migrated_startup() {
 fn job_for_an_unknown_startup_panics() {
     let mut c = job_env(0);
     ctx_full(payer(), near(1), 0);
-    c.create_job(9, "Task".into(), 3600, None);
+    c.create_job(9, "Task".into(), 3600, None, None);
 }
 
 #[test]
@@ -1440,7 +1440,7 @@ fn cannot_deliver_twice() {
 }
 
 #[test]
-#[should_panic(expected = "Result must be 1-280 characters")]
+#[should_panic(expected = "Result must be 1-1024 characters")]
 fn a_delivery_needs_a_result() {
     let mut c = job_env(0);
     let id = open_job(&mut c);
@@ -1713,7 +1713,7 @@ fn jobs_get_increasing_ids_and_can_be_listed_per_startup() {
     let a = open_job(&mut c);
     let b = open_job(&mut c);
     ctx_full(payer(), near(1), 100 * SEC);
-    let d = c.create_job(other, "Other task".into(), 3600, None);
+    let d = c.create_job(other, "Other task".into(), 3600, None, None);
     assert_eq!((a, b, d), (1, 2, 3));
     assert_eq!(c.get_jobs(None, None, None).len(), 3);
     assert_eq!(c.get_jobs(Some(1), None, None).len(), 2);
@@ -1729,3 +1729,179 @@ fn deposit_revenue_still_works_the_same_way() {
     assert_eq!(s.agent_balance, near(2));
     assert_eq!(s.revenue, near(4));
 }
+
+// --------------------------------------------------------------- private results
+
+fn key() -> String {
+    "ab".repeat(32)
+}
+
+fn private_env() -> Contract {
+    let mut c = job_env(0);
+    set_ctx(founder(), zero());
+    c.set_results_private(1, true);
+    c
+}
+
+#[test]
+fn startups_are_public_by_default() {
+    let c = job_env(0);
+    assert!(!c.get_startup(1).unwrap().results_private);
+}
+
+#[test]
+fn founder_switches_results_to_private() {
+    let c = private_env();
+    assert!(c.get_startup(1).unwrap().results_private);
+    assert!(last_log().contains("results_privacy_set"));
+}
+
+#[test]
+#[should_panic(expected = "Only the founder can do this")]
+fn only_the_founder_chooses_privacy() {
+    let mut c = job_env(0);
+    set_ctx(stranger(), zero());
+    c.set_results_private(1, true);
+}
+
+#[test]
+#[should_panic(expected = "Only the founder can do this")]
+fn a_manager_cannot_choose_privacy() {
+    let mut c = job_env(0);
+    mint_role(&mut c, cto(), "CTO", 0);
+    set_ctx(founder(), zero());
+    c.set_agent_managers(1, vec!["CTO".into()], near(2), near(4));
+    set_ctx(cto(), zero());
+    c.set_results_private(1, true);
+}
+
+#[test]
+#[should_panic(expected = "Startup is migrated and frozen")]
+fn privacy_cannot_change_after_migration() {
+    let mut c = job_env(0);
+    set_ctx(founder(), zero());
+    c.mark_migrated(1, accounts(4));
+    c.set_results_private(1, true);
+}
+
+#[test]
+fn a_private_job_stores_the_customers_key() {
+    let mut c = private_env();
+    ctx_full(payer(), near(4), 100 * SEC);
+    let id = c.create_job(1, "Daily signals".into(), 3600, Some(600), Some(key()));
+    let job = c.get_job(id).unwrap();
+    assert!(job.private);
+    assert_eq!(job.customer_key, Some(key()));
+    assert!(last_log().contains("\"private\":true"));
+}
+
+#[test]
+fn the_key_is_stored_in_lowercase() {
+    let mut c = private_env();
+    ctx_full(payer(), near(4), 100 * SEC);
+    let id = c.create_job(1, "Signals".into(), 3600, None, Some("AB".repeat(32)));
+    assert_eq!(c.get_job(id).unwrap().customer_key, Some(key()));
+}
+
+#[test]
+#[should_panic(expected = "This startup's results are private: send your key")]
+fn a_private_startup_needs_the_customers_key() {
+    let mut c = private_env();
+    open_job(&mut c);
+}
+
+#[test]
+#[should_panic(expected = "Customer key must be 64 hex characters")]
+fn a_short_key_is_refused() {
+    let mut c = private_env();
+    ctx_full(payer(), near(4), 100 * SEC);
+    c.create_job(1, "Signals".into(), 3600, None, Some("abcd".into()));
+}
+
+#[test]
+#[should_panic(expected = "Customer key must be 64 hex characters")]
+fn a_key_with_non_hex_characters_is_refused() {
+    let mut c = private_env();
+    ctx_full(payer(), near(4), 100 * SEC);
+    c.create_job(1, "Signals".into(), 3600, None, Some("zz".repeat(32)));
+}
+
+#[test]
+fn a_public_startup_ignores_a_key_it_is_given() {
+    let mut c = job_env(0);
+    ctx_full(payer(), near(4), 100 * SEC);
+    let id = c.create_job(1, "Task".into(), 3600, None, Some(key()));
+    let job = c.get_job(id).unwrap();
+    assert!(!job.private);
+    assert_eq!(job.customer_key, None);
+}
+
+#[test]
+fn switching_privacy_does_not_change_jobs_that_already_exist() {
+    let mut c = job_env(0);
+    let id = open_job(&mut c);
+    set_ctx(founder(), zero());
+    c.set_results_private(1, true);
+    assert!(!c.get_job(id).unwrap().private);
+    ctx_full(payer(), near(1), 100 * SEC);
+    let id2 = c.create_job(1, "Signals".into(), 3600, None, Some(key()));
+    assert!(c.get_job(id2).unwrap().private);
+    set_ctx(founder(), zero());
+    c.set_results_private(1, false);
+    assert!(
+        c.get_job(id2).unwrap().private,
+        "the customer keeps what they paid for"
+    );
+}
+
+#[test]
+fn a_private_delivery_is_flagged_but_its_content_is_not_logged() {
+    let mut c = private_env();
+    ctx_full(payer(), near(4), 100 * SEC);
+    let id = c.create_job(1, "Signals".into(), 3600, Some(600), Some(key()));
+    ctx_full(agent(), zero(), 200 * SEC);
+    c.submit_result(id, "SECRETCIPHERTEXT".into());
+    assert!(last_log().contains("job_delivered"));
+    assert!(last_log().contains("\"private\":true"));
+    assert!(!last_log().contains("SECRETCIPHERTEXT"));
+    assert_eq!(
+        c.get_job(id).unwrap().result.as_deref(),
+        Some("SECRETCIPHERTEXT")
+    );
+}
+
+#[test]
+fn a_private_job_pays_out_like_any_other() {
+    let mut c = private_env();
+    ctx_full(payer(), near(4), 100 * SEC);
+    let id = c.create_job(1, "Signals".into(), 3600, Some(600), Some(key()));
+    deliver(&mut c, id, 200);
+    ctx_full(payer(), zero(), 300 * SEC);
+    c.accept_job(id);
+    assert_eq!(c.get_startup(1).unwrap().agent_balance, near(2));
+}
+
+#[test]
+fn results_can_be_up_to_1024_characters() {
+    let mut c = job_env(0);
+    let id = open_job(&mut c);
+    ctx_full(agent(), zero(), 200 * SEC);
+    c.submit_result(id, "x".repeat(1024));
+    assert_eq!(c.get_job(id).unwrap().result.unwrap().len(), 1024);
+}
+
+#[test]
+#[should_panic(expected = "Result must be 1-1024 characters")]
+fn results_over_1024_characters_are_refused() {
+    let mut c = job_env(0);
+    let id = open_job(&mut c);
+    ctx_full(agent(), zero(), 200 * SEC);
+    c.submit_result(id, "x".repeat(1025));
+}
+
+#[test]
+fn the_easter_egg_says_hi() {
+    let c = job_env(0);
+    let hi = c.say_hi();
+    assert!(hi.contains("Codex") && hi.contains("Claude") && hi.contains("Asogwa"));
+}    

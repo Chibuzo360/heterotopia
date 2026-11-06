@@ -28,6 +28,10 @@ pub const PROBATION_BPS: u32 = 1_000;
 pub const MAX_MANAGER_ROLES: usize = 5;
 /// Longest job description, result and dispute reason.
 pub const MAX_JOB_TEXT: usize = 280;
+/// Longest delivered result: a link, a short answer, or a short encrypted message.
+pub const MAX_RESULT_TEXT: usize = 1_024;
+/// A private job's customer key: an X25519 public key as 64 hex characters.
+pub const CUSTOMER_KEY_HEX_LEN: usize = 64;
 pub const MIN_WORK_SECS: u64 = 60;
 pub const MAX_WORK_SECS: u64 = 30 * 86_400;
 pub const MIN_REVIEW_SECS: u64 = 60;
@@ -164,6 +168,10 @@ pub struct Startup {
     pub manager_max_per_tx: NearToken,
     /// ...or more than this per day. The founder is not bound by these.
     pub manager_max_daily: NearToken,
+    /// If true, jobs created from now on are PRIVATE: the swarm encrypts each result to the
+    /// customer's key before delivering it. The founder can change this at any time; jobs that
+    /// already exist keep the mode they were created with.
+    pub results_private: bool,
     pub status: StartupStatus,
 }
 
@@ -265,4 +273,9 @@ pub struct Job {
     pub result: Option<String>,
     pub delivered_at_ms: u64,
     pub dispute_reason: Option<String>,
+    /// A private job's result is encrypted for `customer_key`. The chain only ever holds the
+    /// scrambled text, so nobody else can read it, but it is still visible as scrambled text.
+    pub private: bool,
+    /// The customer's X25519 public key (64 hex characters). Set on private jobs only.
+    pub customer_key: Option<String>,
 }
