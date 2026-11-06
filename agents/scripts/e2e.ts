@@ -57,6 +57,19 @@ async function main() {
   console.log('Hi Codex, hi Claude: Asogwa says hi.');
   console.log('This is a labeled testnet simulation. No real funds are involved.');
 
+  // Preflight: each run spends about 0.3 NEAR (accepted job) plus gas, so check the balances first.
+  const need_ = { customer: near('0.8'), investor: near('0.3'), founder: near('0.3') } as const;
+  const short: string[] = [];
+  for (const [who, min] of Object.entries(need_)) {
+    const bal = await balanceOf(provider, (ids as any)[who]);
+    if (bal < min) short.push(`${(ids as any)[who]} has ${fmt(bal)} NEAR, needs ${fmt(min)}`);
+  }
+  if (short.length) {
+    console.log('\nNot enough testnet NEAR to run. Top up these accounts and run again:');
+    for (const m of short) console.log(`  - ${m}`);
+    process.exit(2);
+  }
+
   say('Founder creates a startup with two tiers and switches results to private');
   const created = await call<number>(founder, C, 'create_startup', {
     name: `Heto Labs ${Date.now().toString(36)}`,
