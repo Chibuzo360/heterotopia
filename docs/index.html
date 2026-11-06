@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heterotopia Dashboard</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --ink: #1b1d1f; --muted: #62676c; --line: #e2e0d8;
+    --accent: #0b6e4f; --accent-soft: #dff1ea; --warn: #9a5b00; --warn-soft: #fbefd5;
+    --bad: #a3261f; --bad-soft: #f9e0de; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111312; --card: #1a1d1c; --ink: #ecebe6; --muted: #9ba0a3; --line: #2b2f2e;
+      --accent: #5fd0a4; --accent-soft: #173a2e; --warn: #f0b95a; --warn-soft: #3a2c10;
+      --bad: #ff8d85; --bad-soft: #3d1b19;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111312; --card: #1a1d1c; --ink: #ecebe6; --muted: #9ba0a3; --line: #2b2f2e;
+    --accent: #5fd0a4; --accent-soft: #173a2e; --warn: #f0b95a; --warn-soft: #3a2c10;
+    --bad: #ff8d85; --bad-soft: #3d1b19;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 20px 16px 64px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; justify-content: space-between; margin-bottom: 14px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .banner { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 13px; margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .stat { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .stat .k { color: var(--muted); font-size: 12px; }
+  .stat .v { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .stat .u { color: var(--muted); font-size: 12px; font-weight: 400; }
+  select, input, textarea, button { font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  button { white-space: nowrap; cursor: pointer; background: var(--accent); color: #fff; border-color: transparent; font-weight: 600; }
+  :root[data-theme="dark"] button, :root:not([data-theme="light"]) button { color: #0b1b14; }
+  button.ghost { background: transparent; color: var(--ink); border-color: var(--line); font-weight: 500; }
+  input, textarea { width: 100%; font-family: var(--mono); font-size: 13px; }
+  .bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--line); margin: 8px 0 6px; }
+  .bar span { display: block; height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .scroll { overflow-x: auto; }
+  .pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--accent-soft); color: var(--accent); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.bad { background: var(--bad-soft); color: var(--bad); }
+  .pill.mute { background: var(--line); color: var(--muted); }
+  code, .mono { font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+  .muted { color: var(--muted); }
+  .job { border-top: 1px solid var(--line); padding: 12px 0; }
+  .job:first-child { border-top: 0; padding-top: 0; }
+  .result { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 8px; white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+  .err { color: var(--bad); }
+  a { color: var(--accent); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .two { grid-template-columns: 1fr; } }
+  footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Heterotopia <span class="muted" style="font-weight:400">/ heto</span></h1>
+    <div class="row">
+      <span class="pill mute" id="net">NEAR testnet</span>
+      <button class="ghost" id="theme" type="button">Theme</button>
+      <button class="ghost" id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <div class="banner"><strong>Labeled testnet simulation.</strong> No real funds. Agent work is generated in dry-run mode and is not financial advice. This page only reads from the chain; it never asks for your NEAR keys.</div>
+
+  <div class="card">
+    <h2>Contract</h2>
+    <div class="row">
+      <div>Contract <code id="cid"></code></div>
+      <div>Platform fee <strong id="fee">–</strong></div>
+      <div>Platform account <code id="plat">–</code></div>
+      <div class="muted" id="updated"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Startups</h2>
+    <div class="row"><label for="pick" class="muted">Startup</label><select id="pick"></select><span id="status" class="muted"></span></div>
+  </div>
+
+  <div id="detail"></div>
+
+  <div class="two">
+    <div class="card">
+      <h2>Claimable by an account</h2>
+      <div class="row" style="flex-wrap:nowrap"><input id="claimAcct" placeholder="investor.heto2-bybyte.testnet" spellcheck="false"><button id="claimGo" type="button">Look up</button></div>
+      <p id="claimOut" class="muted" style="margin:10px 0 0"></p>
+    </div>
+    <div class="card">
+      <h2>Agent track record</h2>
+      <div class="row" style="flex-wrap:nowrap"><input id="repAcct" placeholder="agent1.heto2-bybyte.testnet" spellcheck="false"><button id="repGo" type="button">Look up</button></div>
+      <div id="repOut" class="muted" style="margin:10px 0 0"></div>
+    </div>
+  </div>
+
+  <footer>
+    Read-only view of <code id="cid2"></code>. Source and tests: <a href="https://github.com/Chibuzo360/heterotopia">github.com/Chibuzo360/heterotopia</a>. Refreshes every 20 seconds.
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tweetnacl/1.0.3/nacl-fast.min.js"></script>
+<script>
+'use strict';
+const CONTRACT = 'heto2-bybyte.testnet';
+const RPCS = ['https://rpc.testnet.near.org', 'https://test.rpc.fastnear.com'];
+const EXPLORER = 'https://explorer.testnet.near.org';
+const YOCTO = 10n ** 24n;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function storeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function storeSet(k, v) { try { localStorage.setItem(k, v); } catch { /* ignore */ } }
+
+// ---- chain access (read-only view calls) ----
+async function rpc(body) {
+  let lastErr;
+  for (const url of RPCS) {
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error.data || json.error.message || 'RPC error');
+      return json.result;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
+async function view(method, args = {}) {
+  const result = await rpc({
+    jsonrpc: '2.0', id: 1, method: 'query',
+    params: { request_type: 'call_function', finality: 'final', account_id: CONTRACT, method_name: method, args_base64: btoa(JSON.stringify(args)) },
+  });
+  if (result.error) throw new Error(result.error);
+  return JSON.parse(new TextDecoder().decode(new Uint8Array(result.result)));
+}
+
+// ---- formatting ----
+function near(yocto, digits = 4) {
+  let y; try { y = BigInt(yocto ?? 0); } catch { return '–'; }
+  const whole = y / YOCTO;
+  const frac = (y % YOCTO).toString().padStart(24, '0').slice(0, digits).replace(/0+$/, '');
+  return frac ? `${whole}.${frac}` : `${whole}`;
+}
+function ago(ms) {
+  if (!ms) return '–';
+  return new Date(Number(ms)).toLocaleString();
+}
+const JOB_PILL = { Open: 'warn', Delivered: '', Disputed: 'bad', Paid: '', Refunded: 'mute' };
+
+// ---- rendering ----
+let startups = [];
+let selectedId = Number(storeGet('heto.startup') ?? NaN);
+const openResult = {}; // job id -> decrypted text or error (kept in memory only)
+
+function renderDetail(s, jobs) {
+  const rev = BigInt(s.revenue), raised = BigInt(s.raised);
+  const parts = [
+    ['Shareholders + roles', 'var(--accent)'],
+    ['Agent budget', '#c98a1b'],
+    ['Operations', '#5b7fc7'],
+  ];
+  const a = s.allocation;
+  const roleShare = (a.holders_bps * a.role_bps) / 10000;
+  const sh = a.holders_bps - roleShare;
+  const widths = [sh + roleShare, a.agent_bps, a.ops_bps].map((b) => b / 100);
+
+  const tiers = s.tiers.map((t) => `<tr><td>${esc(t.name)}</td><td class="num">${near(t.price)}</td><td class="num">${esc(t.minted ?? '')}${t.minted !== undefined ? ' / ' : ''}${esc(t.max_supply)}</td><td class="num">${esc(t.weight)}</td></tr>`).join('');
+
+  const agents = s.agents.length
+    ? s.agents.map((g) => {
+        const now = Date.now() * 1e6;
+        const prob = BigInt(g.probation_until || 0) > BigInt(Math.floor(now));
+        return `<tr>
+          <td><strong>${esc(g.name)}</strong><br><code>${esc(g.account_id)}</code></td>
+          <td class="num">${near(g.per_tx_cap)}</td><td class="num">${near(g.daily_cap)}</td>
+          <td class="num">${near(g.spent_today)}</td>
+          <td>${g.payees.map((p) => `<code>${esc(p)}</code>`).join('<br>') || '<span class="muted">none</span>'}</td>
+          <td>${g.active ? '<span class="pill">active</span>' : '<span class="pill bad">paused</span>'} ${prob ? '<span class="pill warn">probation</span>' : ''}</td></tr>`;
+      }).join('')
+    : '<tr><td colspan="6" class="muted">No agents hired.</td></tr>';
+
+  const jobHtml = jobs.length ? jobs.map((j) => {
+    const pill = `<span class="pill ${JOB_PILL[j.status] ?? ''}">${esc(j.status)}</span>`;
+    const sealed = j.private && j.result && j.result.startsWith('v1:');
+    let resultBlock = '';
+    if (j.result) {
+      resultBlock = `<div class="muted" style="margin-top:8px;font-size:12px">${sealed ? 'Result on chain (encrypted, anyone can see this scrambled text):' : 'Result on chain (public):'}</div>
+        <div class="result">${esc(j.result.length > 220 && sealed ? j.result.slice(0, 220) + '…' : j.result)}</div>`;
+      if (sealed) {
+        const opened = openResult[j.id];
+        resultBlock += `<div class="row" style="margin-top:8px;flex-wrap:nowrap"><input type="password" autocomplete="off" spellcheck="false" placeholder="Customer encryption secret key (64 hex). Stays in this browser tab." data-job="${esc(j.id)}"><button type="button" data-open="${esc(j.id)}">Open</button></div>`;
+        if (opened) resultBlock += `<div class="result ${opened.ok ? '' : 'err'}">${esc(opened.text)}</div>`;
+      }
+    }
+    return `<div class="job">
+      <div class="row"><strong>Job #${esc(j.id)}</strong> ${pill} <span>${near(j.amount)} NEAR</span> ${j.private ? '<span class="pill mute">private</span>' : ''}</div>
+      <div>${esc(j.description)}</div>
+      <div class="muted" style="font-size:12px">customer <code>${esc(j.customer)}</code> · created ${esc(ago(j.created_at_ms))}${j.agent ? ` · agent <code>${esc(j.agent)}</code>` : ''}</div>
+      ${resultBlock}</div>`;
+  }).join('') : '<p class="muted">No jobs yet.</p>';
+
+  $('detail').innerHTML = `
+    <div class="card">
+      <h2>${esc(s.name)} <span class="muted" style="text-transform:none;letter-spacing:0">#${esc(s.id)}</span></h2>
+      <div class="muted" style="margin-bottom:10px">Founder <code>${esc(s.founder)}</code> · treasury <code>${esc(s.treasury)}</code> · results ${s.results_private ? '<span class="pill">private</span>' : '<span class="pill mute">public</span>'}</div>
+      <div class="grid">
+        <div class="stat"><div class="k">Raised from shares</div><div class="v">${near(raised)} <span class="u">NEAR</span></div></div>
+        <div class="stat"><div class="k">Revenue (after fee)</div><div class="v">${near(rev)} <span class="u">NEAR</span></div></div>
+        <div class="stat"><div class="k">Agent budget left</div><div class="v">${near(s.agent_balance)} <span class="u">NEAR</span></div></div>
+        <div class="stat"><div class="k">Operations left</div><div class="v">${near(s.ops_balance)} <span class="u">NEAR</span></div></div>
+      </div>
+      <div style="margin-top:14px" class="muted">How each deposit is split</div>
+      <div class="bar" role="img" aria-label="Revenue split">${parts.map((p, i) => `<span style="width:${widths[i]}%;background:${p[1]}"></span>`).join('')}</div>
+      <div class="legend">${parts.map((p, i) => `<span><i class="dot" style="background:${p[1]}"></i>${p[0]} ${widths[i].toFixed(0)}%</span>`).join('')}<span>Role pool is ${(a.role_bps / 100).toFixed(0)}% of the holders' part</span></div>
+    </div>
+    <div class="card"><h2>Share tiers</h2><div class="scroll"><table><thead><tr><th>Tier</th><th class="num">Price (NEAR)</th><th class="num">Supply</th><th class="num">Weight</th></tr></thead><tbody>${tiers}</tbody></table></div></div>
+    <div class="card"><h2>Agents</h2><div class="scroll"><table><thead><tr><th>Agent</th><th class="num">Per payment cap</th><th class="num">Daily cap</th><th class="num">Spent today</th><th>Allowed payees</th><th>Status</th></tr></thead><tbody>${agents}</tbody></table></div></div>
+    <div class="card"><h2>Jobs (escrow)</h2>${jobHtml}</div>`;
+}
+
+function openSealed(jobId, jobs) {
+  const input = document.querySelector(`input[data-job="${CSS.escape(String(jobId))}"]`);
+  const job = jobs.find((j) => String(j.id) === String(jobId));
+  const hex = (input?.value || '').trim();
+  try {
+    if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error('The secret key must be exactly 64 hex characters.');
+    const bytes = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
+    const packed = Uint8Array.from(atob(job.result.slice(3)), (c) => c.charCodeAt(0));
+    const opened = nacl.box.open(packed.slice(56), packed.slice(32, 56), packed.slice(0, 32), bytes(hex));
+    openResult[jobId] = opened ? { ok: true, text: new TextDecoder().decode(opened) } : { ok: false, text: 'This key cannot open this result.' };
+  } catch (e) {
+    openResult[jobId] = { ok: false, text: e.message };
+  }
+}
+
+let currentJobs = [];
+async function loadDetail() {
+  const s = startups.find((x) => x.id === selectedId);
+  if (!s) { $('detail').innerHTML = ''; return; }
+  currentJobs = await view('get_jobs', { startup_id: s.id, from_index: 0, limit: 50 });
+  renderDetail(s, currentJobs);
+}
+
+async function loadAll() {
+  $('status').textContent = 'Loading…';
+  try {
+    const [platform, list] = await Promise.all([view('get_platform'), view('get_startups', { from_index: 0, limit: 100 })]);
+    $('fee').textContent = `${(platform.fee_bps / 100).toFixed(2)}%`;
+    $('plat').textContent = platform.account_id;
+    startups = list;
+    const pick = $('pick');
+    if (!startups.some((s) => s.id === selectedId)) selectedId = startups.length ? startups[startups.length - 1].id : NaN;
+    pick.innerHTML = startups.map((s) => `<option value="${esc(s.id)}">#${esc(s.id)} ${esc(s.name)}</option>`).join('');
+    if (!Number.isNaN(selectedId)) pick.value = String(selectedId);
+    await loadDetail();
+    $('status').textContent = `${startups.length} startup${startups.length === 1 ? '' : 's'}`;
+    $('updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    $('status').innerHTML = `<span class="err">Could not read the chain: ${esc(e.message)}</span>`;
+  }
+}
+
+// ---- events ----
+$('cid').innerHTML = `<a href="${EXPLORER}/accounts/${CONTRACT}">${CONTRACT}</a>`;
+$('cid2').textContent = CONTRACT;
+$('pick').addEventListener('change', async (e) => { selectedId = Number(e.target.value); storeSet('heto.startup', String(selectedId)); await loadDetail(); });
+$('refresh').addEventListener('click', loadAll);
+$('theme').addEventListener('click', () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const dark = cur ? cur === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  const next = dark ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next); storeSet('heto.theme', next);
+});
+{ const t = storeGet('heto.theme'); if (t) document.documentElement.setAttribute('data-theme', t); }
+
+$('detail').addEventListener('click', (e) => {
+  const id = e.target?.getAttribute?.('data-open');
+  if (!id) return;
+  openSealed(id, currentJobs);
+  const s = startups.find((x) => x.id === selectedId);
+  renderDetail(s, currentJobs);
+});
+
+$('claimGo').addEventListener('click', async () => {
+  const acct = $('claimAcct').value.trim();
+  if (!acct) return;
+  try { $('claimOut').innerHTML = `<strong>${near(await view('get_claimable', { account_id: acct }))} NEAR</strong> claimable by <code>${esc(acct)}</code>`; }
+  catch (e) { $('claimOut').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+});
+$('repGo').addEventListener('click', async () => {
+  const acct = $('repAcct').value.trim();
+  if (!acct) return;
+  try {
+    const r = await view('get_agent_reputation', { account_id: acct });
+    $('repOut').innerHTML = `<table><tbody>
+      <tr><td>Startups served</td><td class="num">${esc(r.startups_served)}</td></tr>
+      <tr><td>Spends approved</td><td class="num">${esc(r.spends_ok)}</td></tr>
+      <tr><td>Spends refused</td><td class="num">${esc(r.spends_refused)}</td></tr>
+      <tr><td>Total spent (NEAR)</td><td class="num">${near(r.total_spent)}</td></tr>
+      <tr><td>Times paused</td><td class="num">${esc(r.times_paused)}</td></tr>
+      <tr><td>Times removed</td><td class="num">${esc(r.times_removed)}</td></tr></tbody></table>
+      <div class="muted" style="font-size:12px;margin-top:6px">Raw counts, not a score. A brand-new account also shows zeros.</div>`;
+  } catch (e) { $('repOut').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+});
+$('claimAcct').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('claimGo').click(); });
+$('repAcct').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('repGo').click(); });
+
+loadAll();
+setInterval(() => { if (!document.hidden && !document.activeElement?.matches?.('input')) loadAll(); }, 20000);
+</script>
+</body>
+</html>
