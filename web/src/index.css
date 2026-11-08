@@ -166,3 +166,33 @@ a { color: inherit; }
 .create-grid .full { grid-column: 1 / -1; }
 .create .field input, .create .field textarea { width: 100%; }
 .warn { color: var(--gold); }
+
+/* wallet */
+.accountbar { background: color-mix(in srgb, var(--accent) 10%, var(--bg)); border-bottom: 1px solid var(--line); font-size: 0.85rem; }
+.accountbar-in { display: flex; align-items: center; gap: 8px 22px; flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; }
+.accountbar .btn-small { margin-top: 0; }
+.ok { color: var(--accent); }
+.job-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.job-actions .btn-small { margin-top: 0; }
+.reject-row { display: flex; gap: 8px; flex: 1 1 100%; }
+.reject-row input { flex: 1; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.keybox { border: 1px dashed var(--line); border-radius: 10px; padding: 12px; margin-bottom: 12px; display: grid; gap: 8px; }
+.keybox .field { margin-bottom: 0; }
+.keybox input { width: 100%; font: inherit; font-size: 0.78rem; }
+.secret { display: grid; gap: 8px; }
+.secret code { display: block; overflow-wrap: anywhere; background: var(--surface-2); border-radius: 8px; padding: 8px; }
+.panel select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%; }
+.secret label { display: flex; gap: 8px; align-items: center; }
+
+/* founder panel */
+.manage { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
+.manage-form { display: grid; gap: 4px; }
+.manage-form .field { margin-bottom: 6px; }
+.manage-form input, .manage-form textarea, .manage-block textarea, .manage-hire input { width: 100%; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.manage-block { display: grid; gap: 8px; margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.manage-hire { margin-top: 4px; }
+.manage-hire > summary { cursor: pointer; font-weight: 600; }
+.manage-hire[open] > summary { margin-bottom: 10px; }
+.manage-hire .btn-small, .manage-block .btn-small { margin-top: 4px; }
+.btn-danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
+.founder-panel h3 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

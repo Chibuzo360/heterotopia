@@ -64,4 +64,6 @@ export interface Job {
   delivered_at_ms: number
   dispute_reason: string | null
   private: boolean
+  result: string | null
+  customer_key: string | null
 }

@@ -3,6 +3,8 @@ import type { Startup } from './lib/types.ts'
 import { CONTRACT_ID, fetchStartups } from './lib/near.ts'
 import { Market } from './components/Market.tsx'
 import { Detail } from './components/Detail.tsx'
+import { AccountBar } from './components/AccountBar.tsx'
+import { useWallet, explain } from './lib/walletContext.ts'
 
 /** Tiny hash router: "#/" is the market, "#/startup/3" is startup 3. No dependency needed. */
 function useRoute(): { startupId: number | null } {
@@ -26,6 +28,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
 
   const [reloadKey, setReloadKey] = useState(0)
+  const wallet = useWallet()
+  const [walletError, setWalletError] = useState<string | null>(null)
 
   // Re-read from the chain when the user asks (Refresh / Try again).
   const load = useCallback(() => {
@@ -40,7 +44,7 @@ export default function App() {
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [reloadKey])
+  }, [reloadKey, wallet.version])
 
   return (
     <>
@@ -49,10 +53,19 @@ export default function App() {
           <a className="brand" href="#/"><span className="brand-mark" />Heterotopia <span className="muted">/ heto</span></a>
           <div className="topbar-right">
             <span className="net">NEAR testnet</span>
-            <button className="btn btn-small" disabled title="Wallet connect is the next phase">Connect wallet</button>
+            {wallet.account ? (
+              <button className="btn btn-small" onClick={() => wallet.disconnect().catch((e) => setWalletError(explain(e)))}>Disconnect</button>
+            ) : (
+              <button className="btn btn-small" disabled={wallet.busy || wallet.unavailable !== null} title={wallet.unavailable ?? undefined}
+                onClick={() => { setWalletError(null); wallet.connect().catch((e) => setWalletError(explain(e))) }}>
+                {wallet.busy ? 'Opening wallet…' : 'Connect wallet'}
+              </button>
+            )}
           </div>
         </div>
       </header>
+      <AccountBar />
+      {walletError && <div className="wrap"><div className="notice notice-error" role="alert">{walletError}<button onClick={() => setWalletError(null)}>Dismiss</button></div></div>}
       <div className="banner">
         Labeled testnet simulation. No real funds. Agent work runs in dry-run mode and is not financial advice. Contract <span className="mono">{CONTRACT_ID}</span>.
       </div>

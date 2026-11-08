@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react'
 import type { Job, Startup } from '../lib/types.ts'
-import { CONTRACT_ID, EXPLORER, fetchJobs, fmtNear, nearNumber, shortAccount, timeAgo } from '../lib/near.ts'
+import { CONTRACT_ID, EXPLORER, fetchJobs, fmtNear, nearNumber, shortAccount, timeAgo, toYocto } from '../lib/near.ts'
+import { useWallet } from '../lib/walletContext.ts'
+import { isValidKey, newKeyPair } from '../lib/keys.ts'
+import { ActionNote } from './Action.tsx'
+import { useAction } from './useAction.ts'
 import { Avatar } from './Avatar.tsx'
+import { AgentControls, FounderPanel } from './Manage.tsx'
 
-const WALLET_NOTE = 'Wallet connect is the next phase. Browsing is read-only until then.'
+const CONNECT_NOTE = 'Connect a wallet (top right) to do this. Browsing stays read-only without one.'
 
 function SplitBar({ s }: { s: Startup }) {
   const a = s.allocation
@@ -65,7 +70,8 @@ function Tiers({ s }: { s: Startup }) {
 
 const AGENTS_SHOWN = 5
 
-function AgentCard({ a }: { a: Startup['agents'][number] }) {
+function AgentCard({ a, s }: { a: Startup['agents'][number]; s: Startup }) {
+  const { account } = useWallet()
   const used = nearNumber(a.daily_cap) > 0 ? Math.min(100, (nearNumber(a.spent_today) / nearNumber(a.daily_cap)) * 100) : 0
   return (
     <div className="agent">
@@ -98,6 +104,7 @@ function AgentCard({ a }: { a: Startup['agents'][number] }) {
         <span>Spent today <b>{fmtNear(a.spent_today)} NEAR</b></span>
       </div>
       <div className="small muted">May only pay: {a.payees.length ? a.payees.map((p) => shortAccount(p, 30)).join(', ') : 'nobody'}</div>
+      {account !== null && account === s.founder && <AgentControls s={s} a={a} />}
     </div>
   )
 }
@@ -109,7 +116,7 @@ function Agents({ s }: { s: Startup }) {
   const hidden = s.agents.length - AGENTS_SHOWN
   return (
     <>
-      <div className="agents">{list.map((a) => <AgentCard key={a.account_id} a={a} />)}</div>
+      <div className="agents">{list.map((a) => <AgentCard key={a.account_id} a={a} s={s} />)}</div>
       {hidden > 0 && (
         <button className="btn btn-small btn-inline" onClick={() => setAll((v) => !v)} aria-expanded={all}>
           {all ? 'Show fewer agents' : `Show all ${s.agents.length} agents`}
@@ -129,6 +136,11 @@ const JOB_SECTIONS: { status: string; title: string; hint: string; open: boolean
 ]
 
 function JobRow({ j }: { j: Job }) {
+  const { account, call, busy } = useWallet()
+  const act = useAction()
+  const [reason, setReason] = useState('')
+  const [rejecting, setRejecting] = useState(false)
+  const mine = account !== null && account === j.customer
   return (
     <div className="job">
       <div className="job-head">
@@ -136,12 +148,27 @@ function JobRow({ j }: { j: Job }) {
         <span className={`pill pill-${j.status.toLowerCase()}`}>{j.status}</span>
         <span className="num">{fmtNear(j.amount)} NEAR</span>
         {j.private && <span className="pill pill-private">private</span>}
+        {mine && <span className="pill pill-role">yours</span>}
       </div>
       <div>{j.description}</div>
       <div className="small muted">
         {shortAccount(j.customer, 30)} · {timeAgo(j.created_at_ms)}
         {j.agent ? ` · agent ${j.agent.split('.')[0]}` : ''}
       </div>
+      {mine && j.status === 'Delivered' && (
+        <div className="job-actions">
+          <button className="btn btn-small" disabled={busy} onClick={() => act.run(() => call('accept_job', { job_id: j.id }))}>Accept result</button>
+          <button className="btn btn-small" disabled={busy} onClick={() => setRejecting((v) => !v)}>Reject…</button>
+          {rejecting && (
+            <div className="reject-row">
+              <input value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} placeholder="Why are you rejecting it?" aria-label="Reason for rejecting" />
+              <button className="btn btn-small" disabled={busy || reason.trim().length === 0}
+                onClick={() => act.run(() => call('reject_job', { job_id: j.id, reason: reason.trim() }))}>Send rejection</button>
+            </div>
+          )}
+          <ActionNote state={act.state} doneText="Done." />
+        </div>
+      )}
     </div>
   )
 }
@@ -149,6 +176,7 @@ function JobRow({ j }: { j: Job }) {
 function Jobs({ startupId }: { startupId: number }) {
   const [jobs, setJobs] = useState<Job[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const { version } = useWallet()
 
   useEffect(() => {
     let cancelled = false
@@ -156,7 +184,7 @@ function Jobs({ startupId }: { startupId: number }) {
       .then((j) => { if (!cancelled) { setJobs(j); setError(null) } })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)) })
     return () => { cancelled = true }
-  }, [startupId])
+  }, [startupId, version])
 
   if (error) return <p className="notice notice-error">Could not load jobs: {error}</p>
   if (!jobs) return <div className="sk-line w100" />
@@ -192,9 +220,12 @@ function Jobs({ startupId }: { startupId: number }) {
 }
 
 function BuyPanel({ s }: { s: Startup }) {
+  const { account, call, busy } = useWallet()
   const [tier, setTier] = useState(0)
+  const act = useAction()
   const t = s.tiers[tier]
   const soldOut = !t || t.minted >= t.max_supply
+  const frozen = s.status !== 'Active'
   return (
     <section className="panel">
       <h3>Buy a share</h3>
@@ -208,30 +239,111 @@ function BuyPanel({ s }: { s: Startup }) {
         ))}
       </div>
       <p className="muted small">A 1% platform fee applies to primary sales. Your share NFT earns {t?.weight ?? 0}× revenue per share and you can claim at any time.</p>
-      <button className="btn btn-primary" disabled title={WALLET_NOTE}>{soldOut ? 'Sold out' : `Buy ${t?.name ?? ''} share`}</button>
-      <p className="muted small">{WALLET_NOTE}</p>
+      <button className="btn btn-primary" disabled={!account || busy || soldOut || frozen} title={account ? undefined : CONNECT_NOTE}
+        onClick={() => act.run(() => call('buy_share', { startup_id: s.id, tier_index: tier }, { deposit: t.price }))}>
+        {soldOut ? 'Sold out' : frozen ? 'Startup is frozen' : `Buy ${t?.name ?? ''} share for ${t ? fmtNear(t.price) : ''} NEAR`}
+      </button>
+      {!account && <p className="muted small">{CONNECT_NOTE}</p>}
+      <ActionNote state={act.state} doneText="Share bought. It is in your wallet now." />
     </section>
   )
 }
 
+const WORK_CHOICES = [
+  { label: '1 hour', secs: 3600 },
+  { label: '1 day', secs: 86400 },
+  { label: '7 days', secs: 604800 },
+]
+
 function OrderPanel({ s }: { s: Startup }) {
+  const { account, call, busy } = useWallet()
+  const act = useAction()
+  const [text, setText] = useState('')
+  const [pay, setPay] = useState('0.3')
+  const [work, setWork] = useState(86400)
+  const [key, setKey] = useState('')
+  const [secret, setSecret] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const yocto = toYocto(pay)
+  const needsKey = s.results_private
+  const keyOk = !needsKey || isValidKey(key.trim())
+  // A key we generated must be saved first, or the result can never be opened.
+  const keySafe = secret === null || saved
+  const ready = account !== null && text.trim().length > 0 && text.length <= 280 && yocto !== null && keyOk && keySafe
+
+  function generate() {
+    const kp = newKeyPair()
+    setKey(kp.publicKey)
+    setSecret(kp.secretKey)
+    setSaved(false)
+    setCopied(false)
+  }
+
+  async function copySecret() {
+    if (!secret) return
+    try {
+      await navigator.clipboard.writeText(secret)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
+  }
+
   return (
     <section className="panel">
       <h3>Place an order</h3>
       <p className="muted small">Pay {s.name}’s agents for a job. The money sits in escrow until you accept the result or the review window ends.</p>
       <label className="field">What do you need?
-        <textarea rows={3} placeholder="Daily NEAR/USDC trading signal" disabled />
+        <textarea rows={3} maxLength={280} value={text} onChange={(e) => setText(e.target.value)} placeholder="Daily NEAR/USDC trading signal" />
       </label>
       <label className="field">Payment (NEAR)
-        <input type="number" placeholder="0.3" disabled />
+        <input inputMode="decimal" value={pay} onChange={(e) => setPay(e.target.value)} placeholder="0.3" />
       </label>
-      <button className="btn" disabled title={WALLET_NOTE}>Place order</button>
-      <p className="muted small">{WALLET_NOTE}</p>
+      <label className="field">Agents have
+        <select value={work} onChange={(e) => setWork(Number(e.target.value))}>
+          {WORK_CHOICES.map((w) => <option key={w.secs} value={w.secs}>{w.label} to deliver</option>)}
+        </select>
+      </label>
+      {needsKey && (
+        <div className="keybox">
+          <p className="small">This startup encrypts results. Only the holder of your secret key can open yours.</p>
+          <label className="field">Your public key (64 hex characters)
+            <input className="mono" value={key} onChange={(e) => { setKey(e.target.value); setSecret(null) }} placeholder="paste yours, or generate a new pair" />
+          </label>
+          <button type="button" className="btn btn-small" onClick={generate}>Generate a new key pair</button>
+          {secret && (
+            <div className="secret">
+              <p className="small warn">Your SECRET key. It is shown only now and is not stored anywhere. Without it nobody can open your result.</p>
+              <code className="mono small">{secret}</code>
+              <div>
+                <button type="button" className="btn btn-small" onClick={copySecret}>{copied ? 'Copied' : 'Copy'}</button>
+              </div>
+              <label className="small"><input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I saved my secret key</label>
+            </div>
+          )}
+          {key.trim() !== '' && !isValidKey(key.trim()) && <p className="small warn">That is not a valid key: it must be 64 hex characters, not all zeros.</p>}
+        </div>
+      )}
+      <button className="btn btn-primary" disabled={!ready || busy} title={account ? undefined : CONNECT_NOTE}
+        onClick={() => act.run(() => call('create_job', {
+          startup_id: s.id,
+          description: text.trim(),
+          work_secs: work,
+          review_secs: null,
+          customer_key: needsKey ? key.trim().toLowerCase() : null,
+        }, { deposit: yocto ?? '0' }))}>
+        Pay {pay || '0'} NEAR into escrow
+      </button>
+      {!account && <p className="muted small">{CONNECT_NOTE}</p>}
+      <ActionNote state={act.state} doneText="Order placed. The money is in escrow." />
     </section>
   )
 }
 
 export function Detail({ startup, onRefresh }: { startup: Startup | undefined; onRefresh: () => void }) {
+  const { account } = useWallet()
   if (!startup) {
     return (
       <main className="wrap">
@@ -270,6 +382,7 @@ export function Detail({ startup, onRefresh }: { startup: Startup | undefined; o
           <section className="panel"><h3>Jobs (escrow)</h3><Jobs startupId={s.id} /></section>
         </div>
         <aside className="detail-side">
+          {account !== null && account === s.founder && <FounderPanel key={`${s.id}-${s.description}-${s.results_private}`} s={s} />}
           <BuyPanel s={s} />
           <OrderPanel s={s} />
         </aside>

@@ -9,7 +9,7 @@ const RPC_URLS = ['https://test.rpc.fastnear.com', 'https://rpc.testnet.near.org
 const YOCTO = 10n ** 24n
 
 /** Read-only call to the contract. No wallet and no keys involved. */
-async function view<T>(method: string, args: Record<string, unknown> = {}): Promise<T> {
+export async function view<T>(method: string, args: Record<string, unknown> = {}): Promise<T> {
   const body = JSON.stringify({
     jsonrpc: '2.0',
     id: 'heto',
@@ -81,4 +81,21 @@ export function timeAgo(ms: number): string {
   if (s < 3600) return `${Math.floor(s / 60)} min ago`
   if (s < 86400) return `${Math.floor(s / 3600)} h ago`
   return `${Math.floor(s / 86400)} d ago`
+}
+
+export function fetchClaimable(accountId: string): Promise<string> {
+  return view<string>('get_claimable', { account_id: accountId })
+}
+
+/** "0.25" -> yoctoNEAR string, without floating point. Returns null for anything that is not a plain positive decimal. */
+export function toYocto(text: string): string | null {
+  const t = text.trim()
+  if (!/^\d+(\.\d{1,24})?$/.test(t)) return null
+  const [whole, frac = ''] = t.split('.')
+  const v = BigInt(whole) * YOCTO + BigInt(frac.padEnd(24, '0'))
+  return v > 0n ? v.toString() : null
+}
+
+export function txLink(hash: string): string {
+  return `https://testnet.nearblocks.io/txns/${hash}`
 }
