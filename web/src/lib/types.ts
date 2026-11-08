@@ -26,11 +26,15 @@ export interface Agent {
   probation_until: number
   day: number
   spent_today: string
+  model: string
+  instructions: string
+  swarm_role: string
 }
 
 export interface Startup {
   id: number
   name: string
+  description: string
   founder: string
   treasury: string
   tiers: Tier[]

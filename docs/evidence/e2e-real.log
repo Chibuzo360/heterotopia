@@ -1,0 +1,103 @@
+
+> heto-agents@0.1.0 e2e
+> tsx scripts/e2e.ts
+
+Heterotopia end-to-end run on testnet. Contract: heto3-bybyte.testnet. DRY_RUN=false
+This is a labeled testnet simulation. No real funds are involved.
+
+[1] Founder creates a startup with two tiers and switches results to private
+    startup id 3
+    tx: https://explorer.testnet.near.org/transactions/E42GNrF7xEELzoE3tBsNur7rk8rX8q6CY63qZQE4mD2W
+    tx: https://explorer.testnet.near.org/transactions/23pHv16EunqtZrHvaNPHVCrWFouzaHFdsrVFQU5K6mcS
+
+[2] Investor buys a General share NFT (the money goes to the treasury, minus the 1% platform fee)
+    token 3:3
+    tx: https://explorer.testnet.near.org/transactions/E9rbS3P5i7Wnbjz3RbyBzYW2DULPvq2ixWywgvaTdBdP
+
+[3] Founder hires the agent (caps and one allowed payee) and promotes it past probation
+    tx: https://explorer.testnet.near.org/transactions/B5FDTEWs8qhfpUXKEeqB9aa52ox7rVnqdsiA9L9dzQSn
+
+[4] Founder hires a worker agent and sets each agent's model, instructions and swarm role ON-CHAIN
+    tx: https://explorer.testnet.near.org/transactions/FyyECxBTgmsezc1qtcwmQgkuohpEzM7fWNCFYF5WQRzT
+    tx: https://explorer.testnet.near.org/transactions/2jra9n7dTcziCfDrXZSwmQiKWMZZ5sToYJzRGSPgbHf7
+    PASS: the lead agent's model and role are stored on-chain
+    PASS: the worker agent's model and role are stored on-chain
+    reputation before work: spends_ok=4, spends_refused=4
+
+[5] Customer pays 0.3 NEAR for a job. The money is held in escrow, not yet revenue. Results are private, so the customer sends an encryption key
+    job id 3
+    tx: https://explorer.testnet.near.org/transactions/2XEsHUfSTTenBNM4ooPAdUiKyBbtBXR7bQPYHWzRbcN9
+    PASS: escrow: job money is not revenue yet
+
+[6] The swarm does the work: the worker drafts, the lead finalizes using the models and instructions it READ FROM THE CHAIN, encrypts to the customer key, and delivers
+    price source: near-intents-dry-quote (3.673107)
+    worker (z-ai/glm-5.3-flash) drafts, then lead (z-ai/glm-5.3) finalizes. DRY_RUN=false
+    PASS: encrypted result fits the 1024-character limit
+    tx: https://explorer.testnet.near.org/transactions/6Kv7FTsyJtgkPFVSrVS2TRon437e1m2Up2A73wNoLzpo
+
+[7] Anyone can read the result on-chain, but only the customer can open it
+    on-chain text starts: v1:DTGN/DI2EzNjgCeOI8zM/nfJFP7Atuh7Ghtdj...
+    PASS: a different key cannot open it
+    PASS: the customer key opens it
+
+    | [SIMULATED NOTE — NOT FINANCIAL ADVICE]
+    | NEAR/USDC daily signal (sim)
+    | Ref: 3.6731 | Bias: mild bullish
+    | Entry: 3.62–3.66 | Stop: 3.55 (~-2.5% at entry mid)
+    | TP1: 3.78 (~+3.8%) | TP2: 3.90 (~+7.1%)
+    | R:R ~1:1.6 (TP1), ~1:2.9 (TP2) from entry mid
+    | Sim 24h range: 3.55–3.72 | Invalidation: daily close < 3.55
+    | Lead note: draft %s were mixed ref/entry anchors — now standardized to entry mid; added TP2 R:R and worst-entry (3.66) R:R ~1:1.1 caveat.
+    | All figures simulated. Verify live data & risk params before any use.
+
+[8] Customer accepts. The payment becomes revenue and is split into buckets
+    tx: https://explorer.testnet.near.org/transactions/72RELBAAbNHexZkspmEtuyGHKsikmGuFWYyJ4sfhRJDL
+    split: fee 0.003, shareholders 0.1782, role pool 0, agent budget 0.0594, operations 0.0594 (NEAR)
+    PASS: revenue now equals the job payment
+    PASS: the agent budget bucket was filled
+
+[9] The agent pays its allowed vendor, from the agent budget bucket only
+    tx: https://explorer.testnet.near.org/transactions/HHzAVYZmRrtxzMdK5YSfZZj5pnwNCkjF3my7Dez2mTA7
+    PASS: payment inside the limits was approved
+    PASS: the vendor really received 0.01 NEAR
+
+[10] The lead agent pays the worker agent out of the job revenue (agent budget bucket, same limits, same contract)
+    tx: https://explorer.testnet.near.org/transactions/DLiWWj88ui79BZrYvYNLXYQ8RahdeNfLk2Wp95M1vS2A
+    PASS: the lead's payment to the worker was approved
+    PASS: the worker really received 0.005 NEAR
+
+[11] The agent tries to pay more than its per-payment cap. The contract refuses and logs why
+    PASS: over-cap payment refused (over_per_payment_cap)
+
+[12] A look-alike payee: the agent's own guard flags it first (fail-closed)
+    guard verdict for vend0r.heto3-bybyte.testnet: {"ok":false,"reason":"look_alike","lookAlikeOf":"vendor.heto3-bybyte.testnet"}
+    PASS: the local guard flags the look-alike
+    Now we bypass the guard on purpose to show the contract is the real wall
+    PASS: contract refused the unlisted payee (payee_not_allowed)
+
+[13] Attacks. The network (restricted key) or the contract (rules) must reject every one of these
+    network said: Access key does not allow method create_startup
+    PASS: calling `create_startup` (a method outside the key's list) was blocked
+    network said: Access key does not allow method claim
+    PASS: calling `claim` (a method outside the key's list) was blocked
+    network said: Access key requires full access
+    PASS: transferring NEAR out of the agent account was blocked
+    network said: Access key receiver heto3-bybyte.testnet does not match transaction receiver vendor.heto3-bybyte.testnet
+    PASS: calling a different contract was blocked
+    network said: Smart contract panicked: Not a registered agent of this startup
+    PASS: a non-agent calling agent_spend was blocked
+
+[14] Investor claims the revenue earned by the share
+    claimable: 0.1782 NEAR
+    tx: https://explorer.testnet.near.org/transactions/D4HxGuS9wg2FsbDGbqQWSsivHR6XfAVBthjgB6b16Vrh
+    PASS: claim paid out everything
+
+[15] Reputation record for the agent (raw facts, not a score)
+    {"startups_served":3,"spends_ok":6,"spends_refused":6,"total_spent":"45000000000000000000000","times_paused":0,"times_removed":0}
+    changes since the agent was hired here: ok +2, refused +2, spent +0.015 NEAR
+    PASS: exactly 2 approved spends were counted (vendor and worker)
+    PASS: exactly 2 refused spends were counted (over-cap and unlisted payee)
+    PASS: total_spent grew by exactly the 0.015 NEAR paid to the vendor and the worker
+    PASS: the agent was never paused or removed
+
+=== 25/25 checks passed ===

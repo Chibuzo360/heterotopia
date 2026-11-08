@@ -1,0 +1,102 @@
+
+> heto-agents@0.1.0 e2e
+> tsx scripts/e2e.ts
+
+Heterotopia end-to-end run on testnet. Contract: heto3-bybyte.testnet. DRY_RUN=true
+This is a labeled testnet simulation. No real funds are involved.
+
+[1] Founder creates a startup with two tiers and switches results to private
+    startup id 2
+    tx: https://explorer.testnet.near.org/transactions/7xLohVWGMhb1pKYANM7EV3pUkNoUEwNUUP9UEMwALBUG
+    tx: https://explorer.testnet.near.org/transactions/C4HyQ8pJiR2GpffeWZhY5ZXvuUaVLe5DEvrcR7iJQDZX
+
+[2] Investor buys a General share NFT (the money goes to the treasury, minus the 1% platform fee)
+    token 2:2
+    tx: https://explorer.testnet.near.org/transactions/2di9HBGCxNVvzPT8P4HKpPoBTKUnpzzbLeNgGa8peQjA
+
+[3] Founder hires the agent (caps and one allowed payee) and promotes it past probation
+    tx: https://explorer.testnet.near.org/transactions/7E8T1MmuKA4CDjnhfHsMi9LHiXVjgRmQtFHsc3niZCfx
+
+[4] Founder hires a worker agent and sets each agent's model, instructions and swarm role ON-CHAIN
+    tx: https://explorer.testnet.near.org/transactions/DxQYSNizYJJZRBaypyqUmjHG8SBUZErh7snPuN98e8wV
+    tx: https://explorer.testnet.near.org/transactions/5Q3Xp4wWLVKrfmmicJDJyZMpsqEqWM2GGUAmDJYDge3e
+    PASS: the lead agent's model and role are stored on-chain
+    PASS: the worker agent's model and role are stored on-chain
+    reputation before work: spends_ok=2, spends_refused=2
+
+[5] Customer pays 0.3 NEAR for a job. The money is held in escrow, not yet revenue. Results are private, so the customer sends an encryption key
+    job id 2
+    tx: https://explorer.testnet.near.org/transactions/8Hd6jGk7wEs7jV1Myznv8HZmGiLWnEkRBq7CCBX1aZxM
+    PASS: escrow: job money is not revenue yet
+
+[6] The swarm does the work: the worker drafts, the lead finalizes using the models and instructions it READ FROM THE CHAIN, encrypts to the customer key, and delivers
+    price source: near-intents-dry-quote (3.675096)
+    worker (z-ai/glm-5.2) drafts, then lead (zai-org/GLM-5.1-FP8) finalizes. DRY_RUN=true
+    PASS: encrypted result fits the 1024-character limit
+    tx: https://explorer.testnet.near.org/transactions/9q31u9dmXfm1VunZJfaBU89QNTDehnAR8TqVXcqABxnk
+
+[7] Anyone can read the result on-chain, but only the customer can open it
+    on-chain text starts: v1:61eZAoAT7YWIZ53o6tlooCpQoQaoiZEpWtDHv...
+    PASS: a different key cannot open it
+    PASS: the customer key opens it
+
+    | SIMULATED SIGNAL for job #2 (dry-run, not financial advice)
+    | Task: Daily NEAR/USDC trading signal
+    | Lead (model zai-org/GLM-5.1-FP8) reviewed this worker draft:
+    | Draft by worker (model z-ai/glm-5.2):
+    | NEAR/USDC reference 3.68 (near-intents-dry-quote).
+    | Entry 3.60-3.64, stop 3.49, target 3.86.
+    | Bias: WATCH.
+    | Testnet simulation: nothing here moves real money.
+
+[8] Customer accepts. The payment becomes revenue and is split into buckets
+    tx: https://explorer.testnet.near.org/transactions/27VJuKa5boz6nwoLRKuSMQJe7htWwzKYfJLZVi8wUivS
+    split: fee 0.003, shareholders 0.1782, role pool 0, agent budget 0.0594, operations 0.0594 (NEAR)
+    PASS: revenue now equals the job payment
+    PASS: the agent budget bucket was filled
+
+[9] The agent pays its allowed vendor, from the agent budget bucket only
+    tx: https://explorer.testnet.near.org/transactions/Hu9S8AN1cQGEF15rmenYz5STpCRk3JLs7eZPZDrXPu6d
+    PASS: payment inside the limits was approved
+    PASS: the vendor really received 0.01 NEAR
+
+[10] The lead agent pays the worker agent out of the job revenue (agent budget bucket, same limits, same contract)
+    tx: https://explorer.testnet.near.org/transactions/DE9BoDNACJL4a2wdfN71ut8gUvGS8v5mG5PJaACXvnex
+    PASS: the lead's payment to the worker was approved
+    PASS: the worker really received 0.005 NEAR
+
+[11] The agent tries to pay more than its per-payment cap. The contract refuses and logs why
+    PASS: over-cap payment refused (over_per_payment_cap)
+
+[12] A look-alike payee: the agent's own guard flags it first (fail-closed)
+    guard verdict for vend0r.heto3-bybyte.testnet: {"ok":false,"reason":"look_alike","lookAlikeOf":"vendor.heto3-bybyte.testnet"}
+    PASS: the local guard flags the look-alike
+    Now we bypass the guard on purpose to show the contract is the real wall
+    PASS: contract refused the unlisted payee (payee_not_allowed)
+
+[13] Attacks. The network (restricted key) or the contract (rules) must reject every one of these
+    network said: Access key does not allow method create_startup
+    PASS: calling `create_startup` (a method outside the key's list) was blocked
+    network said: Access key does not allow method claim
+    PASS: calling `claim` (a method outside the key's list) was blocked
+    network said: Access key requires full access
+    PASS: transferring NEAR out of the agent account was blocked
+    network said: Access key receiver heto3-bybyte.testnet does not match transaction receiver vendor.heto3-bybyte.testnet
+    PASS: calling a different contract was blocked
+    network said: Smart contract panicked: Not a registered agent of this startup
+    PASS: a non-agent calling agent_spend was blocked
+
+[14] Investor claims the revenue earned by the share
+    claimable: 0.1782 NEAR
+    tx: https://explorer.testnet.near.org/transactions/2XXDcrcJHR2haWJC9XbSC3hW15xgSb73NRQBeJ9Rsesi
+    PASS: claim paid out everything
+
+[15] Reputation record for the agent (raw facts, not a score)
+    {"startups_served":2,"spends_ok":4,"spends_refused":4,"total_spent":"30000000000000000000000","times_paused":0,"times_removed":0}
+    changes since the agent was hired here: ok +2, refused +2, spent +0.015 NEAR
+    PASS: exactly 2 approved spends were counted (vendor and worker)
+    PASS: exactly 2 refused spends were counted (over-cap and unlisted payee)
+    PASS: total_spent grew by exactly the 0.015 NEAR paid to the vendor and the worker
+    PASS: the agent was never paused or removed
+
+=== 25/25 checks passed ===

@@ -63,31 +63,85 @@ function Tiers({ s }: { s: Startup }) {
   )
 }
 
-function Agents({ s }: { s: Startup }) {
-  if (s.agents.length === 0) return <p className="muted">No agents hired yet.</p>
+const AGENTS_SHOWN = 5
+
+function AgentCard({ a }: { a: Startup['agents'][number] }) {
+  const used = nearNumber(a.daily_cap) > 0 ? Math.min(100, (nearNumber(a.spent_today) / nearNumber(a.daily_cap)) * 100) : 0
   return (
-    <div className="agents">
-      {s.agents.map((a) => {
-        const used = nearNumber(a.daily_cap) > 0 ? Math.min(100, (nearNumber(a.spent_today) / nearNumber(a.daily_cap)) * 100) : 0
-        return (
-          <div className="agent" key={a.account_id}>
-            <div className="agent-head">
-              <div>
-                <strong>{a.name}</strong>
-                <div className="mono small muted">{a.account_id}</div>
-              </div>
-              <span className={`pill ${a.active ? 'pill-ok' : 'pill-off'}`}>{a.active ? 'active' : 'paused'}</span>
-            </div>
-            <div className="meter" title="Spent today versus the daily cap"><div className="meter-fill meter-agent" style={{ width: `${used}%` }} /></div>
-            <div className="agent-limits">
-              <span>Per payment <b>{fmtNear(a.per_tx_cap)} NEAR</b></span>
-              <span>Daily cap <b>{fmtNear(a.daily_cap)} NEAR</b></span>
-              <span>Spent today <b>{fmtNear(a.spent_today)} NEAR</b></span>
-            </div>
-            <div className="small muted">May only pay: {a.payees.length ? a.payees.map((p) => shortAccount(p, 30)).join(', ') : 'nobody'}</div>
-          </div>
-        )
-      })}
+    <div className="agent">
+      <div className="agent-head">
+        <div>
+          <strong>{a.name}</strong>
+          <div className="mono small muted">{a.account_id}</div>
+        </div>
+        <div className="pills">
+          {a.swarm_role && <span className="pill pill-role">{a.swarm_role}</span>}
+          <span className={`pill ${a.active ? 'pill-ok' : 'pill-off'}`}>{a.active ? 'active' : 'paused'}</span>
+        </div>
+      </div>
+      {a.model && (
+        <div className="small">
+          <span className="muted">Model </span><span className="mono">{a.model}</span>
+        </div>
+      )}
+      {a.instructions && (
+        <details className="instr">
+          <summary className="small muted">Founder’s instructions</summary>
+          <p className="small">{a.instructions}</p>
+          <p className="small muted">Stored on chain. The agent program reads this before it works; the contract cannot force it to obey, but it does enforce every spending limit below.</p>
+        </details>
+      )}
+      <div className="meter" title="Spent today versus the daily cap"><div className="meter-fill meter-agent" style={{ width: `${used}%` }} /></div>
+      <div className="agent-limits">
+        <span>Per payment <b>{fmtNear(a.per_tx_cap)} NEAR</b></span>
+        <span>Daily cap <b>{fmtNear(a.daily_cap)} NEAR</b></span>
+        <span>Spent today <b>{fmtNear(a.spent_today)} NEAR</b></span>
+      </div>
+      <div className="small muted">May only pay: {a.payees.length ? a.payees.map((p) => shortAccount(p, 30)).join(', ') : 'nobody'}</div>
+    </div>
+  )
+}
+
+function Agents({ s }: { s: Startup }) {
+  const [all, setAll] = useState(false)
+  if (s.agents.length === 0) return <p className="muted">No agents hired yet.</p>
+  const list = all ? s.agents : s.agents.slice(0, AGENTS_SHOWN)
+  const hidden = s.agents.length - AGENTS_SHOWN
+  return (
+    <>
+      <div className="agents">{list.map((a) => <AgentCard key={a.account_id} a={a} />)}</div>
+      {hidden > 0 && (
+        <button className="btn btn-small btn-inline" onClick={() => setAll((v) => !v)} aria-expanded={all}>
+          {all ? 'Show fewer agents' : `Show all ${s.agents.length} agents`}
+        </button>
+      )}
+    </>
+  )
+}
+
+// Order matters: what needs attention comes first.
+const JOB_SECTIONS: { status: string; title: string; hint: string; open: boolean }[] = [
+  { status: 'Open', title: 'Open', hint: 'Paid into escrow, waiting for delivery', open: true },
+  { status: 'Delivered', title: 'Delivered', hint: 'Result is in; the customer can accept or reject', open: true },
+  { status: 'Disputed', title: 'Disputed', hint: 'Rejected by the customer, waiting for the arbiter', open: true },
+  { status: 'Paid', title: 'Paid', hint: 'Accepted. The payment became revenue', open: false },
+  { status: 'Refunded', title: 'Refunded', hint: 'Not delivered in time or ruled for the customer', open: false },
+]
+
+function JobRow({ j }: { j: Job }) {
+  return (
+    <div className="job">
+      <div className="job-head">
+        <strong>Job #{j.id}</strong>
+        <span className={`pill pill-${j.status.toLowerCase()}`}>{j.status}</span>
+        <span className="num">{fmtNear(j.amount)} NEAR</span>
+        {j.private && <span className="pill pill-private">private</span>}
+      </div>
+      <div>{j.description}</div>
+      <div className="small muted">
+        {shortAccount(j.customer, 30)} · {timeAgo(j.created_at_ms)}
+        {j.agent ? ` · agent ${j.agent.split('.')[0]}` : ''}
+      </div>
     </div>
   )
 }
@@ -107,23 +161,32 @@ function Jobs({ startupId }: { startupId: number }) {
   if (error) return <p className="notice notice-error">Could not load jobs: {error}</p>
   if (!jobs) return <div className="sk-line w100" />
   if (jobs.length === 0) return <p className="muted">No jobs yet.</p>
+
+  const known = new Set(JOB_SECTIONS.map((x) => x.status))
+  const other = jobs.filter((j) => !known.has(j.status))
+  const newestFirst = (a: Job, b: Job) => b.id - a.id
   return (
-    <div className="jobs">
-      {jobs.map((j) => (
-        <div className="job" key={j.id}>
-          <div className="job-head">
-            <strong>Job #{j.id}</strong>
-            <span className={`pill pill-${j.status.toLowerCase()}`}>{j.status}</span>
-            <span className="num">{fmtNear(j.amount)} NEAR</span>
-            {j.private && <span className="pill pill-private">private</span>}
-          </div>
-          <div>{j.description}</div>
-          <div className="small muted">
-            {shortAccount(j.customer, 30)} · {timeAgo(j.created_at_ms)}
-            {j.agent ? ` · agent ${j.agent.split('.')[0]}` : ''}
-          </div>
-        </div>
-      ))}
+    <div className="job-sections">
+      {JOB_SECTIONS.map((sec) => {
+        const list = jobs.filter((j) => j.status === sec.status).sort(newestFirst)
+        if (list.length === 0) return null
+        return (
+          <details key={sec.status} className="job-section" open={sec.open}>
+            <summary>
+              <span className="job-section-title">{sec.title}</span>
+              <span className="count">{list.length}</span>
+              <span className="small muted job-section-hint">{sec.hint}</span>
+            </summary>
+            <div className="jobs">{list.map((j) => <JobRow key={j.id} j={j} />)}</div>
+          </details>
+        )
+      })}
+      {other.length > 0 && (
+        <details className="job-section" open>
+          <summary><span className="job-section-title">Other</span><span className="count">{other.length}</span></summary>
+          <div className="jobs">{other.sort(newestFirst).map((j) => <JobRow key={j.id} j={j} />)}</div>
+        </details>
+      )}
     </div>
   )
 }
@@ -186,6 +249,7 @@ export function Detail({ startup, onRefresh }: { startup: Startup | undefined; o
         <div>
           <div className="eyebrow">Startup #{s.id} · {s.status}</div>
           <h1>{s.name}</h1>
+          <p className="lead">{s.description}</p>
           <div className="small muted">
             Founder <span className="mono">{s.founder}</span> · Treasury <span className="mono">{s.treasury}</span>
           </div>

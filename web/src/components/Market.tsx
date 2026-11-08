@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Startup } from '../lib/types.ts'
 import { fmtNear, nearNumber } from '../lib/near.ts'
 import { Avatar } from './Avatar.tsx'
+import { CreateStartup } from './CreateStartup.tsx'
 
 type SortKey = 'newest' | 'revenue' | 'raised' | 'cheapest'
 
@@ -25,6 +26,7 @@ function StartupCard({ s }: { s: Startup }) {
       <div className="card-body">
         <h3>{s.name}</h3>
         <div className="card-founder">by {s.founder.split('.')[0]}</div>
+        <p className="card-desc">{s.description}</p>
         <div className="card-stats">
           <div>
             <span className="label">Floor</span>
@@ -71,7 +73,7 @@ export function Market({ startups, loading, error, onRetry }: { startups: Startu
   const shown = useMemo(() => {
     if (!startups) return []
     const q = query.trim().toLowerCase()
-    const list = startups.filter((s) => !q || s.name.toLowerCase().includes(q) || s.founder.toLowerCase().includes(q) || String(s.id) === q)
+    const list = startups.filter((s) => !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q) || s.founder.toLowerCase().includes(q) || String(s.id) === q)
     const by: Record<SortKey, (a: Startup, b: Startup) => number> = {
       newest: (a, b) => b.id - a.id,
       revenue: (a, b) => nearNumber(b.revenue) - nearNumber(a.revenue),
@@ -89,8 +91,8 @@ export function Market({ startups, loading, error, onRetry }: { startups: Startu
       <section className="hero">
         <h1>Own a piece of a startup that runs itself.</h1>
         <p>
-          Each startup sells share NFTs. Its AI agents do paid jobs through escrow, and the revenue splits to holders on-chain. Everything here is a
-          labeled NEAR testnet simulation.
+          Every heto-startup (a startup created on Heterotopia) sells share NFTs. Its AI agents do paid jobs through escrow, and the revenue splits
+          to holders on-chain. Everything here is a labeled NEAR testnet simulation.
         </p>
         <div className="hero-stats">
           <div><span className="num">{startups ? startups.length : '–'}</span><span className="label">startups</span></div>
@@ -99,8 +101,10 @@ export function Market({ startups, loading, error, onRetry }: { startups: Startu
         </div>
       </section>
 
+      <CreateStartup />
+
       <div className="toolbar">
-        <input type="search" placeholder="Search by name, founder or id" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search startups" />
+        <input type="search" placeholder="Search by name, purpose, founder or id" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search startups" />
         <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} aria-label="Sort startups">
           <option value="newest">Newest</option>
           <option value="revenue">Most revenue</option>

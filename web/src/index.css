@@ -139,3 +139,30 @@ a { color: inherit; }
   .brand .muted, .net { display: none; }
   .hero { padding-top: 24px; }
 }
+
+/* v4: description, agent directive, job sections, create form */
+.card-desc { margin: 0 0 12px; color: var(--muted); font-size: 0.82rem; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.lead { margin: 0 0 10px; max-width: 62ch; }
+.pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.pill-role { background: color-mix(in srgb, var(--gold) 24%, var(--surface)); }
+.pill-open, .pill-delivered { background: color-mix(in srgb, var(--blue) 25%, var(--surface)); }
+.pill-disputed { background: color-mix(in srgb, var(--bad) 22%, var(--surface)); }
+.pill-refunded { background: var(--line); }
+.instr summary { cursor: pointer; }
+.instr p { margin: 6px 0; }
+.btn-inline { width: auto; margin-top: 12px; }
+.panel .btn-inline { width: auto; }
+.job-sections { display: grid; gap: 10px; }
+.job-section { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.job-section > summary { cursor: pointer; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.job-section[open] > summary { margin-bottom: 12px; }
+.job-section-title { font-weight: 600; }
+.count { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; background: var(--surface-2); border-radius: 99px; padding: 1px 8px; }
+.job-section-hint { margin-left: auto; }
+.create { margin: 6px 0 14px; }
+.create > summary { cursor: pointer; font-weight: 600; font-family: 'Space Grotesk', sans-serif; }
+.create[open] > summary { margin-bottom: 12px; }
+.create-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0 14px; }
+.create-grid .full { grid-column: 1 / -1; }
+.create .field input, .create .field textarea { width: 100%; }
+.warn { color: var(--gold); }
