@@ -33,7 +33,7 @@ export function loadConfig(): Config {
   if (network !== 'testnet') throw new Error('Only testnet is supported. Mainnet is deliberately blocked.');
   return {
     network: 'testnet',
-    contractId: process.env.CONTRACT_ID ?? 'heto2-bybyte.testnet',
+    contractId: process.env.CONTRACT_ID ?? 'heto3-bybyte.testnet',
     rpcUrls: (process.env.NEAR_RPC_URLS ?? 'https://rpc.testnet.near.org,https://test.rpc.fastnear.com')
       .split(',')
       .map((s) => s.trim())

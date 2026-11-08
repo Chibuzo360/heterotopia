@@ -1,6 +1,6 @@
 import type { Job, Startup } from './types.ts'
 
-export const CONTRACT_ID = 'heto2-bybyte.testnet'
+export const CONTRACT_ID = 'heto3-bybyte.testnet'
 export const EXPLORER = 'https://testnet.nearblocks.io'
 
 // Tried in order; the first that answers wins.

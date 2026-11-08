@@ -10,7 +10,7 @@ import { loadConfig, loadDotEnv, loadFunderKey } from '../src/config.js';
 import { newEncryptionKeypair } from '../src/crypto.js';
 import { accountExists, actions, fmt, makeAccount, makeProvider, near, why } from '../src/near.js';
 
-const FUNDER = process.env.FUNDER_ID ?? 'heto2-bybyte.testnet';
+const FUNDER = process.env.FUNDER_ID ?? 'heto3-bybyte.testnet';
 
 async function main() {
   loadDotEnv();
