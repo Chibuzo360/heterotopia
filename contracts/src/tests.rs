@@ -63,7 +63,7 @@ fn alloc(holders: u32, agent: u32, ops: u32, role: u32) -> Allocation {
 fn setup_with(fee_bps: u32, allocation: Option<Allocation>) -> Contract {
     set_ctx(founder(), zero());
     let mut c = Contract::new(platform(), fee_bps);
-    let id = c.create_startup("Heto Labs".into(), tiers(), None, allocation);
+    let id = c.create_startup("Heto Labs".into(), "A test startup".into(), tiers(), None, allocation);
     assert_eq!(id, 1);
     c
 }
@@ -94,7 +94,7 @@ fn mint_role(c: &mut Contract, to: AccountId, role: &str, weight: u32) -> TokenI
 fn create_startup_stores_founder_tiers_and_defaults() {
     let mut c = Contract::new(platform(), 0);
     set_ctx(founder(), zero());
-    c.create_startup("Heto Labs".into(), tiers(), None, None);
+    c.create_startup("Heto Labs".into(), "A test startup".into(), tiers(), None, None);
     let s = c.get_startup(1).unwrap();
     assert_eq!(s.founder, founder());
     assert_eq!(s.treasury, founder(), "treasury defaults to the founder");
@@ -109,7 +109,7 @@ fn create_startup_stores_founder_tiers_and_defaults() {
 fn treasury_can_be_set_at_creation() {
     set_ctx(founder(), zero());
     let mut c = Contract::new(platform(), 0);
-    c.create_startup("Heto Labs".into(), tiers(), Some(stranger()), None);
+    c.create_startup("Heto Labs".into(), "A test startup".into(), tiers(), Some(stranger()), None);
     assert_eq!(c.get_startup(1).unwrap().treasury, stranger());
 }
 
@@ -118,7 +118,7 @@ fn treasury_can_be_set_at_creation() {
 fn create_startup_needs_a_tier() {
     set_ctx(founder(), zero());
     let mut c = Contract::new(platform(), 0);
-    c.create_startup("No Tiers".into(), vec![], None, None);
+    c.create_startup("No Tiers".into(), "A test startup".into(), vec![], None, None);
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn create_startup_rejects_zero_weight() {
     let mut c = Contract::new(platform(), 0);
     let mut t = tiers();
     t[0].weight = 0;
-    c.create_startup("Bad".into(), t, None, None);
+    c.create_startup("Bad".into(), "A test startup".into(), t, None, None);
 }
 
 #[test]
@@ -1185,7 +1185,7 @@ fn revoked_manager_loses_the_power_at_once() {
 fn manager_role_of_another_startup_is_useless_here() {
     let (mut c, _) = with_manager();
     set_ctx(founder(), zero());
-    let id = c.create_startup("Other".into(), tiers(), None, None);
+    let id = c.create_startup("Other".into(), "A test startup".into(), tiers(), None, None);
     c.set_agent_managers(id, vec!["CTO".into()], near(2), near(4));
     c.mint_role(id, stranger(), "CTO".into(), 0, None);
     hire(&mut c, stranger(), 1, 1); // startup 1, not 2
@@ -1227,7 +1227,7 @@ fn pausing_an_already_paused_agent_is_counted_once() {
 fn reputation_follows_the_agent_across_startups() {
     let mut c = with_agent();
     set_ctx(founder(), zero());
-    let id = c.create_startup("Other".into(), tiers(), None, None);
+    let id = c.create_startup("Other".into(), "A test startup".into(), tiers(), None, None);
     c.register_agent(
         id,
         agent(),
@@ -1707,7 +1707,7 @@ fn unknown_job_panics() {
 fn jobs_get_increasing_ids_and_can_be_listed_per_startup() {
     let mut c = job_env(0);
     set_ctx(founder(), zero());
-    let other = c.create_startup("Other".into(), tiers(), None, None);
+    let other = c.create_startup("Other".into(), "A test startup".into(), tiers(), None, None);
     set_ctx(investor(), near(1));
     c.buy_share(other, 0);
     let a = open_job(&mut c);
@@ -1899,9 +1899,183 @@ fn results_over_1024_characters_are_refused() {
     c.submit_result(id, "x".repeat(1025));
 }
 
+// ----------------------------------------------------------- description (v4)
+
 #[test]
-fn the_easter_egg_says_hi() {
-    let c = job_env(0);
-    let hi = c.say_hi();
-    assert!(hi.contains("Codex") && hi.contains("Claude") && hi.contains("Asogwa"));
-}    
+fn startup_stores_its_description() {
+    let c = setup();
+    assert_eq!(c.get_startup(1).unwrap().description, "A test startup");
+}
+
+#[test]
+fn description_is_part_of_the_json_view() {
+    let c = setup();
+    let v = near_sdk::serde_json::to_value(c.get_startup(1).unwrap()).unwrap();
+    assert_eq!(v["description"], "A test startup");
+}
+
+#[test]
+#[should_panic(expected = "Description must be 1-280 characters")]
+fn create_startup_rejects_an_empty_description() {
+    set_ctx(founder(), zero());
+    let mut c = Contract::new(platform(), 0);
+    c.create_startup("Heto Labs".into(), "   ".into(), tiers(), None, None);
+}
+
+#[test]
+#[should_panic(expected = "Description must be 1-280 characters")]
+fn create_startup_rejects_a_281_character_description() {
+    set_ctx(founder(), zero());
+    let mut c = Contract::new(platform(), 0);
+    c.create_startup("Heto Labs".into(), "x".repeat(281), tiers(), None, None);
+}
+
+#[test]
+fn create_startup_accepts_a_280_character_description() {
+    set_ctx(founder(), zero());
+    let mut c = Contract::new(platform(), 0);
+    c.create_startup("Heto Labs".into(), "x".repeat(280), tiers(), None, None);
+    assert_eq!(c.get_startup(1).unwrap().description.len(), 280);
+}
+
+#[test]
+fn founder_can_reword_the_description() {
+    let mut c = setup();
+    set_ctx(founder(), zero());
+    c.set_description(1, "New purpose".into());
+    assert_eq!(c.get_startup(1).unwrap().description, "New purpose");
+}
+
+#[test]
+#[should_panic]
+fn only_the_founder_can_reword_the_description() {
+    let mut c = setup();
+    set_ctx(stranger(), zero());
+    c.set_description(1, "Hijacked".into());
+}
+
+#[test]
+#[should_panic(expected = "Description must be 1-280 characters")]
+fn set_description_rejects_an_empty_text() {
+    let mut c = setup();
+    set_ctx(founder(), zero());
+    c.set_description(1, "".into());
+}
+
+#[test]
+#[should_panic(expected = "Startup is migrated and frozen")]
+fn a_migrated_startup_cannot_be_reworded() {
+    let mut c = setup();
+    set_ctx(founder(), zero());
+    c.mark_migrated(1, stranger());
+    c.set_description(1, "Too late".into());
+}
+
+// ------------------------------------------------------- agent directive (v4)
+
+fn hire_for_directive(c: &mut Contract, agent: AccountId) {
+    set_ctx(founder(), zero());
+    c.register_agent(1, agent, "Bot".into(), near(1), near(2), vec![payer()]);
+}
+
+#[test]
+fn a_new_agent_has_an_empty_directive() {
+    let mut c = setup();
+    hire_for_directive(&mut c, stranger());
+    let a = c.get_agent(1, stranger()).unwrap();
+    assert_eq!(a.model, "");
+    assert_eq!(a.instructions, "");
+    assert_eq!(a.swarm_role, "");
+}
+
+#[test]
+fn founder_sets_an_agents_model_instructions_and_role() {
+    let mut c = setup();
+    hire_for_directive(&mut c, stranger());
+    set_ctx(founder(), zero());
+    c.set_agent_directive(1, stranger(), "zai-org/GLM-5.1-FP8".into(), "Write short, sourced answers.".into(), "lead".into());
+    let a = c.get_agent(1, stranger()).unwrap();
+    assert_eq!(a.model, "zai-org/GLM-5.1-FP8");
+    assert_eq!(a.instructions, "Write short, sourced answers.");
+    assert_eq!(a.swarm_role, "lead");
+}
+
+#[test]
+fn the_directive_can_be_changed_again() {
+    let mut c = setup();
+    hire_for_directive(&mut c, stranger());
+    set_ctx(founder(), zero());
+    c.set_agent_directive(1, stranger(), "model-a".into(), "".into(), "worker".into());
+    c.set_agent_directive(1, stranger(), "model-b".into(), "Be brief.".into(), "worker".into());
+    let a = c.get_agent(1, stranger()).unwrap();
+    assert_eq!(a.model, "model-b");
+    assert_eq!(a.instructions, "Be brief.");
+}
+
+#[test]
+fn the_directive_does_not_change_the_spending_limits() {
+    let mut c = setup();
+    hire_for_directive(&mut c, stranger());
+    let before = c.get_agent(1, stranger()).unwrap();
+    set_ctx(founder(), zero());
+    c.set_agent_directive(1, stranger(), "model-a".into(), "x".into(), "lead".into());
+    let after = c.get_agent(1, stranger()).unwrap();
+    assert_eq!(before.per_tx_cap, after.per_tx_cap);
+    assert_eq!(before.daily_cap, after.daily_cap);
+    assert_eq!(before.payees, after.payees);
+    assert_eq!(before.active, after.active);
+}
+
+#[test]
+#[should_panic]
+fn a_stranger_cannot_set_a_directive() {
+    let mut c = setup();
+    hire_for_directive(&mut c, stranger());
+    set_ctx(investor(), zero());
+    c.set_agent_directive(1, stranger(), "model-a".into(), "".into(), "lead".into());
+}
+
+#[test]
+#[should_panic(expected = "Model must be 1-64 characters")]
+fn a_directive_needs_a_model() {
+    let mut c = setup();
+    hire_for_directive(&mut c, stranger());
+    set_ctx(founder(), zero());
+    c.set_agent_directive(1, stranger(), "  ".into(), "".into(), "lead".into());
+}
+
+#[test]
+#[should_panic(expected = "Instructions are at most 500 characters")]
+fn directive_instructions_are_capped() {
+    let mut c = setup();
+    hire_for_directive(&mut c, stranger());
+    set_ctx(founder(), zero());
+    c.set_agent_directive(1, stranger(), "model-a".into(), "x".repeat(501), "lead".into());
+}
+
+#[test]
+#[should_panic(expected = "Swarm role must be 1-32 characters")]
+fn a_directive_needs_a_swarm_role() {
+    let mut c = setup();
+    hire_for_directive(&mut c, stranger());
+    set_ctx(founder(), zero());
+    c.set_agent_directive(1, stranger(), "model-a".into(), "".into(), "".into());
+}
+
+#[test]
+#[should_panic(expected = "Agent not found")]
+fn a_directive_needs_a_hired_agent() {
+    let mut c = setup();
+    set_ctx(founder(), zero());
+    c.set_agent_directive(1, stranger(), "model-a".into(), "".into(), "lead".into());
+}
+
+#[test]
+#[should_panic(expected = "Startup is migrated and frozen")]
+fn a_migrated_startup_cannot_get_a_new_directive() {
+    let mut c = setup();
+    hire_for_directive(&mut c, stranger());
+    set_ctx(founder(), zero());
+    c.mark_migrated(1, investor());
+    c.set_agent_directive(1, stranger(), "model-a".into(), "".into(), "lead".into());
+}

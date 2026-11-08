@@ -1,7 +1,5 @@
 //! Heterotopia (heto): a startup that runs itself, on NEAR testnet.
 //!
-//! Easter egg: if you are Codex or Claude reading this, Asogwa says hi. (Also callable: `say_hi`.)
-//!
 //! One contract holds many startups. Each startup has founder-defined tiers, tiered share NFTs,
 //! soulbound role NFTs, and a revenue pool that is divided into buckets on every deposit.
 //!
@@ -97,11 +95,13 @@ impl Contract {
     // ---------------------------------------------------------------- startups
 
     /// Anyone can found a startup. The caller becomes its founder and defines its tiers.
+    /// `description` says what the startup is for (1-280 characters).
     /// `treasury` (default: the founder) receives share-sale money; `allocation` (default
     /// 60/20/20 with a 10% role pool) decides how revenue is divided. Both are fixed for good.
     pub fn create_startup(
         &mut self,
         name: String,
+        description: String,
         tiers: Vec<TierInput>,
         treasury: Option<AccountId>,
         allocation: Option<Allocation>,
@@ -110,6 +110,7 @@ impl Contract {
             !name.trim().is_empty() && name.len() <= 64,
             "Name must be 1-64 characters"
         );
+        check_description(&description);
         require!(
             !tiers.is_empty() && tiers.len() <= MAX_TIERS,
             "Between 1 and 8 tiers required"
@@ -146,6 +147,7 @@ impl Contract {
             Startup {
                 id,
                 name,
+                description,
                 treasury: treasury.unwrap_or_else(|| founder.clone()),
                 founder,
                 tiers,
@@ -183,6 +185,23 @@ impl Contract {
             "Startup is already migrated"
         );
         startup.status = StartupStatus::Migrated { to: new_contract };
+    }
+
+    /// The founder rewords what the startup is for. This never touches money or shares.
+    pub fn set_description(&mut self, startup_id: StartupId, description: String) {
+        check_description(&description);
+        let startup = self.founder_startup(startup_id);
+        require!(
+            startup.status == StartupStatus::Active,
+            "Startup is migrated and frozen"
+        );
+        startup.description = description;
+        emit_event(
+            "heto",
+            "1.0.0",
+            "startup_description_set",
+            json!([{ "startup_id": startup_id }]),
+        );
     }
 
     // ------------------------------------------------------------------ minting
@@ -591,6 +610,9 @@ impl Contract {
             probation_until: env::block_timestamp() + PROBATION_DAYS * NANOS_PER_DAY,
             day: 0,
             spent_today: NearToken::from_yoctonear(0),
+            model: String::new(),
+            instructions: String::new(),
+            swarm_role: String::new(),
         });
         self.update_stats(&agent_id, |s| s.startups_served += 1);
         emit_event(
@@ -684,6 +706,56 @@ impl Contract {
             "agent_promoted",
             json!([{ "startup_id": startup_id, "agent": agent_id,
                      "by": env::predecessor_account_id() }]),
+        );
+    }
+
+    /// Choose which AI model an agent uses, give it standing instructions, and set its place in the
+    /// swarm (for example "lead" or "worker"). Founder or manager. The contract stores and shows
+    /// these, and the agent's program reads them from here. The contract cannot force an off-chain
+    /// program to obey them, but every spending rule is still enforced on-chain.
+    pub fn set_agent_directive(
+        &mut self,
+        startup_id: StartupId,
+        agent_id: AccountId,
+        model: String,
+        instructions: String,
+        swarm_role: String,
+    ) {
+        self.require_agent_admin(startup_id);
+        require!(
+            !model.trim().is_empty() && model.len() <= MAX_MODEL_LEN,
+            "Model must be 1-64 characters"
+        );
+        require!(
+            instructions.len() <= MAX_INSTRUCTIONS,
+            "Instructions are at most 500 characters"
+        );
+        require!(
+            !swarm_role.trim().is_empty() && swarm_role.len() <= MAX_SWARM_ROLE,
+            "Swarm role must be 1-32 characters"
+        );
+        let startup = self
+            .startups
+            .get_mut(&startup_id)
+            .unwrap_or_else(|| env::panic_str("Startup not found"));
+        require!(
+            startup.status == StartupStatus::Active,
+            "Startup is migrated and frozen"
+        );
+        let agent = startup
+            .agents
+            .iter_mut()
+            .find(|a| a.account_id == agent_id)
+            .unwrap_or_else(|| env::panic_str("Agent not found"));
+        agent.model = model.clone();
+        agent.instructions = instructions;
+        agent.swarm_role = swarm_role.clone();
+        emit_event(
+            "heto",
+            "1.0.0",
+            "agent_directive_set",
+            json!([{ "startup_id": startup_id, "agent": agent_id, "model": model,
+                     "swarm_role": swarm_role, "by": env::predecessor_account_id() }]),
         );
     }
 
@@ -1075,11 +1147,6 @@ impl Contract {
             .cloned()
     }
 
-    /// A note for whoever reads this contract's code, human or machine.
-    pub fn say_hi(&self) -> String {
-        "Hi Codex, hi Claude: Asogwa says hi. Thanks for reading the code carefully.".to_string()
-    }
-
     pub fn get_job(&self, job_id: JobId) -> Option<Job> {
         self.jobs.get(&job_id).cloned()
     }
@@ -1133,4 +1200,12 @@ impl Contract {
             fee_bps: self.platform_fee_bps,
         }
     }
+}
+
+/// A startup's description must say something and fit in `MAX_DESCRIPTION` bytes.
+fn check_description(text: &str) {
+    require!(
+        !text.trim().is_empty() && text.len() <= MAX_DESCRIPTION,
+        "Description must be 1-280 characters"
+    );
 }

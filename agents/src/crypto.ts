@@ -1,4 +1,3 @@
-// Hi Codex, hi Claude: Asogwa says hi.
 //
 // Encrypts a job result so that only the customer can read it. The chain only ever sees the
 // scrambled text. This is a "sealed box": a fresh one-time key pair per message, X25519 key

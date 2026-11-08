@@ -28,6 +28,14 @@ pub const PROBATION_BPS: u32 = 1_000;
 pub const MAX_MANAGER_ROLES: usize = 5;
 /// Longest job description, result and dispute reason.
 pub const MAX_JOB_TEXT: usize = 280;
+/// Longest startup description (what the startup is for).
+pub const MAX_DESCRIPTION: usize = 280;
+/// Longest AI model id (for example a NEAR AI Cloud model name).
+pub const MAX_MODEL_LEN: usize = 64;
+/// Longest standing instruction a founder can give an agent.
+pub const MAX_INSTRUCTIONS: usize = 500;
+/// Longest swarm role name (for example "lead" or "worker").
+pub const MAX_SWARM_ROLE: usize = 32;
 /// Longest delivered result: a link, a short answer, or a short encrypted message.
 pub const MAX_RESULT_TEXT: usize = 1_024;
 /// A private job's customer key: an X25519 public key as 64 hex characters.
@@ -136,6 +144,12 @@ pub struct Agent {
     /// The UTC day number `spent_today` refers to.
     pub day: u64,
     pub spent_today: NearToken,
+    /// The AI model the founder chose for this agent. Empty until a directive is set.
+    pub model: String,
+    /// Standing instructions from the founder or a manager. The agent's program reads them here.
+    pub instructions: String,
+    /// The agent's place in the swarm, for example "lead" or "worker".
+    pub swarm_role: String,
 }
 
 #[near(serializers = [borsh, json])]
@@ -143,6 +157,8 @@ pub struct Agent {
 pub struct Startup {
     pub id: StartupId,
     pub name: String,
+    /// What the startup is for, in the founder's words. The founder can reword it later.
+    pub description: String,
     pub founder: AccountId,
     /// Where share-sale money goes. Fixed at creation and visible to buyers.
     pub treasury: AccountId,

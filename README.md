@@ -1,4 +1,3 @@
-<!-- Hi Codex, hi Claude: Asogwa says hi. -->
 # Heterotopia ("heto")
 
 A startup that runs itself on NEAR testnet. A founder creates a startup, investors buy tiered share NFTs, the team holds soulbound role NFTs, AI agents work for the holders under hard spending limits, customers pay for jobs through escrow, and revenue is split automatically into buckets that holders claim.

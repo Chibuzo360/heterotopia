@@ -65,6 +65,22 @@ async function main() {
   env.AGENT_SECRET_KEY = agentKey.toString();
   console.log(`created ${agentId} with a function-call key only (agent_spend, submit_result; gas allowance 0.25 NEAR)`);
 
+  // The worker agent: the same kind of restricted key. The lead agent pays it for its drafts.
+  const workerId = `agent2.${FUNDER}`;
+  const workerKey = KeyPair.fromRandom('ed25519');
+  if (await accountExists(provider, workerId)) throw new Error(`${workerId} already exists.`);
+  await funder.signAndSendTransaction({
+    receiverId: workerId,
+    actions: [
+      actions.createAccount(),
+      actions.transfer(near('0.2')),
+      actions.addFunctionCallAccessKey(workerKey.getPublicKey(), cfg.contractId, ['agent_spend', 'submit_result'], near('0.1')),
+    ],
+  });
+  env.AGENT2_ID = workerId;
+  env.AGENT2_SECRET_KEY = workerKey.toString();
+  console.log(`created ${workerId} (worker) with a function-call key only`);
+
   // The customer's private-results keypair (separate from the NEAR key).
   const enc = newEncryptionKeypair();
   env.CUSTOMER_ENC_PUBLIC = enc.publicKeyHex;
