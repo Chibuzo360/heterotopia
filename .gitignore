@@ -5,3 +5,4 @@ build/
 .near-credentials/
 *.log
 target/
+.agent-state.json
