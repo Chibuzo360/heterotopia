@@ -55,13 +55,22 @@ export function CreateStartup() {
         </label>
       </div>
       <button className="btn btn-primary" disabled={!ready || busy} title={account ? undefined : CONNECT_NOTE}
-        onClick={() => act.run(() => call('create_startup', {
-          name: name.trim(),
-          description: purpose.trim(),
-          tiers: [{ name: tierName.trim(), price: priceYocto, max_supply: supplyNum, weight: 1 }],
-          treasury: null,
-          allocation: null,
-        }))}>
+        onClick={async () => {
+          const ok = await act.run(() => call('create_startup', {
+            name: name.trim(),
+            description: purpose.trim(),
+            tiers: [{ name: tierName.trim(), price: priceYocto, max_supply: supplyNum, weight: 1 }],
+            treasury: null,
+            allocation: null,
+          }))
+          if (ok) {
+            setName('')
+            setPurpose('')
+            setTierName('General')
+            setPrice('0.1')
+            setSupply('100')
+          }
+        }}>
         Create startup
       </button>
       {!account && <p className="muted small">{CONNECT_NOTE}</p>}

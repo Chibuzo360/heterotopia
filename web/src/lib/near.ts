@@ -1,4 +1,4 @@
-import type { Job, Startup } from './types.ts'
+import type { Job, Startup, Token } from './types.ts'
 
 export const CONTRACT_ID = 'heto3-bybyte.testnet'
 export const EXPLORER = 'https://testnet.nearblocks.io'
@@ -16,7 +16,7 @@ export async function view<T>(method: string, args: Record<string, unknown> = {}
     method: 'query',
     params: {
       request_type: 'call_function',
-      finality: 'final',
+      finality: 'optimistic',
       account_id: CONTRACT_ID,
       method_name: method,
       args_base64: btoa(JSON.stringify(args)),
@@ -55,6 +55,23 @@ export async function fetchStartups(): Promise<Startup[]> {
 
 export function fetchJobs(startupId: number): Promise<Job[]> {
   return view<Job[]>('get_jobs', { startup_id: startupId, from_index: 0, limit: 50 })
+}
+
+/** Everything this account holds. `from_index` is a string because the contract takes a U128. */
+export function fetchTokens(accountId: string): Promise<Token[]> {
+  return view<Token[]>('nft_tokens_for_owner', { account_id: accountId, from_index: '0', limit: 100 })
+}
+
+/** Every job on the contract, oldest first, read a page at a time. */
+export async function fetchAllJobs(): Promise<Job[]> {
+  const out: Job[] = []
+  const PAGE = 100
+  for (let i = 0; i < 20; i++) {
+    const page = await view<Job[]>('get_jobs', { from_index: i * PAGE, limit: PAGE })
+    out.push(...page)
+    if (page.length < PAGE) break
+  }
+  return out
 }
 
 /** yoctoNEAR string -> readable NEAR amount, at most `decimals` decimals. */

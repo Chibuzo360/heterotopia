@@ -28,6 +28,7 @@ export function AccountBar() {
         </span>
         <button className="btn btn-small" disabled={!has || busy} onClick={() => claim.run(() => call('claim', {}))}>Claim</button>
         <ActionNote state={claim.state} doneText="Claimed." />
+        <a href="#/me" className="accountbar-link">What I hold and ordered →</a>
       </div>
     </div>
   )

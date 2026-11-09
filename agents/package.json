@@ -8,7 +8,8 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
     "setup": "tsx scripts/setup.ts",
-    "e2e": "tsx scripts/e2e.ts"
+    "e2e": "tsx scripts/e2e.ts",
+    "agent": "tsx scripts/run-agent.ts"
   },
   "dependencies": {
     "near-api-js": "^7.4.0",

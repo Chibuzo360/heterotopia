@@ -68,6 +68,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         throw new Error(`The transaction failed on chain: ${JSON.stringify((status as { Failure: unknown }).Failure).slice(0, 200)}`)
       }
       setVersion((v) => v + 1)
+      setTimeout(() => setVersion((v) => v + 1), 4000)
       return (out as { transaction?: { hash?: string } }).transaction?.hash ?? ''
     } finally {
       setBusy(false)

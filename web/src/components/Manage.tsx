@@ -120,9 +120,16 @@ function HireForm({ s }: { s: Startup }) {
         </label>
       </div>
       <button className="btn btn-small" disabled={!ok || busy}
-        onClick={() => act.run(() => call('register_agent', {
-          startup_id: s.id, agent_id: account.trim(), name: name.trim(), per_tx_cap: perYocto, daily_cap: dayYocto, payees: payeeList,
-        }))}>Hire agent</button>
+        onClick={async () => {
+          const done = await act.run(() => call('register_agent', {
+            startup_id: s.id, agent_id: account.trim(), name: name.trim(), per_tx_cap: perYocto, daily_cap: dayYocto, payees: payeeList,
+          }))
+          if (done) {
+            setAccount('')
+            setName('')
+            setPayees('')
+          }
+        }}>Hire agent</button>
       <ActionNote state={act.state} doneText="Agent hired." />
     </details>
   )
@@ -133,17 +140,21 @@ export function FounderPanel({ s }: { s: Startup }) {
   const { call, busy } = useWallet()
   const priv = useAction()
   const desc = useAction()
-  const [text, setText] = useState(s.description)
+  // null means "not edited": show what is on chain, so a refresh from the chain shows up at once.
+  const [draft, setDraft] = useState<string | null>(null)
+  const text = draft ?? s.description
   return (
     <section className="panel founder-panel">
       <h3>Manage this startup <span className="pill pill-role">you are the founder</span></h3>
       <Models />
       <div className="manage-block">
         <strong>What it is for</strong>
-        <textarea rows={3} value={text} maxLength={MAX_DESCRIPTION} onChange={(e) => setText(e.target.value)} aria-label="Startup description" />
+        <textarea rows={3} value={text} maxLength={MAX_DESCRIPTION} onChange={(e) => setDraft(e.target.value)} aria-label="Startup description" />
         <div className="job-actions">
           <button className="btn btn-small" disabled={busy || text.trim().length === 0 || text.trim() === s.description}
-            onClick={() => desc.run(() => call('set_description', { startup_id: s.id, description: text.trim() }))}>Save description</button>
+            onClick={async () => {
+              if (await desc.run(() => call('set_description', { startup_id: s.id, description: text.trim() }))) setDraft(null)
+            }}>Save description</button>
           <span className="small muted">{MAX_DESCRIPTION - text.length} characters left</span>
         </div>
         <ActionNote state={desc.state} doneText="Description saved." />

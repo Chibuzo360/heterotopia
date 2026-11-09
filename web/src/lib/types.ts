@@ -67,3 +67,12 @@ export interface Job {
   result: string | null
   customer_key: string | null
 }
+
+/** A token owned by an account. Shares carry a tier; any other kind is a role. */
+export interface Token {
+  token_id: string
+  owner_id: string
+  startup_id: number
+  kind: Record<string, unknown>
+  reward_debt: string
+}

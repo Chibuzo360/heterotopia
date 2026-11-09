@@ -10,12 +10,14 @@ export type ActionState =
 /** Runs one wallet action and remembers how it went, so every button reports the same way. */
 export function useAction() {
   const [state, setState] = useState<ActionState>({ kind: 'idle' })
-  const run = useCallback(async (fn: () => Promise<string>) => {
+  const run = useCallback(async (fn: () => Promise<string>): Promise<boolean> => {
     setState({ kind: 'sending' })
     try {
       setState({ kind: 'done', hash: await fn() })
+      return true
     } catch (e) {
       setState({ kind: 'error', message: explain(e) })
+      return false
     }
   }, [])
   return { state, run }

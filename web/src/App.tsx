@@ -3,14 +3,15 @@ import type { Startup } from './lib/types.ts'
 import { CONTRACT_ID, fetchStartups } from './lib/near.ts'
 import { Market } from './components/Market.tsx'
 import { Detail } from './components/Detail.tsx'
+import { MyAccount } from './components/MyAccount.tsx'
 import { AccountBar } from './components/AccountBar.tsx'
 import { useWallet, explain } from './lib/walletContext.ts'
 
 /** Tiny hash router: "#/" is the market, "#/startup/3" is startup 3. No dependency needed. */
-function useRoute(): { startupId: number | null } {
+function useRoute(): { startupId: number | null; me: boolean } {
   const read = () => {
     const m = window.location.hash.match(/^#\/startup\/(\d+)/)
-    return { startupId: m ? Number(m[1]) : null }
+    return { startupId: m ? Number(m[1]) : null, me: window.location.hash.startsWith('#/me') }
   }
   const [route, setRoute] = useState(read)
   useEffect(() => {
@@ -22,7 +23,7 @@ function useRoute(): { startupId: number | null } {
 }
 
 export default function App() {
-  const { startupId } = useRoute()
+  const { startupId, me } = useRoute()
   const [startups, setStartups] = useState<Startup[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -52,6 +53,7 @@ export default function App() {
         <div className="wrap topbar-in">
           <a className="brand" href="#/"><span className="brand-mark" />Heterotopia <span className="muted">/ heto</span></a>
           <div className="topbar-right">
+            {wallet.account && <a className={`navlink${me ? ' is-here' : ''}`} href="#/me">My account</a>}
             <span className="net">NEAR testnet</span>
             {wallet.account ? (
               <button className="btn btn-small" onClick={() => wallet.disconnect().catch((e) => setWalletError(explain(e)))}>Disconnect</button>
@@ -69,7 +71,9 @@ export default function App() {
       <div className="banner">
         Labeled testnet simulation. No real funds. Agent work runs in dry-run mode and is not financial advice. Contract <span className="mono">{CONTRACT_ID}</span>.
       </div>
-      {startupId === null ? (
+      {me ? (
+        <MyAccount startups={startups} />
+      ) : startupId === null ? (
         <Market startups={startups} loading={loading} error={error} onRetry={load} />
       ) : (
         <>

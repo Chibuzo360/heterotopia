@@ -7,6 +7,7 @@ import { ActionNote } from './Action.tsx'
 import { useAction } from './useAction.ts'
 import { Avatar } from './Avatar.tsx'
 import { AgentControls, FounderPanel } from './Manage.tsx'
+import { JobResult } from './JobResult.tsx'
 
 const CONNECT_NOTE = 'Connect a wallet (top right) to do this. Browsing stays read-only without one.'
 
@@ -155,6 +156,7 @@ function JobRow({ j }: { j: Job }) {
         {shortAccount(j.customer, 30)} · {timeAgo(j.created_at_ms)}
         {j.agent ? ` · agent ${j.agent.split('.')[0]}` : ''}
       </div>
+      {(mine || !j.private) && <JobResult j={j} />}
       {mine && j.status === 'Delivered' && (
         <div className="job-actions">
           <button className="btn btn-small" disabled={busy} onClick={() => act.run(() => call('accept_job', { job_id: j.id }))}>Accept result</button>
@@ -327,13 +329,21 @@ function OrderPanel({ s }: { s: Startup }) {
         </div>
       )}
       <button className="btn btn-primary" disabled={!ready || busy} title={account ? undefined : CONNECT_NOTE}
-        onClick={() => act.run(() => call('create_job', {
-          startup_id: s.id,
-          description: text.trim(),
-          work_secs: work,
-          review_secs: null,
-          customer_key: needsKey ? key.trim().toLowerCase() : null,
-        }, { deposit: yocto ?? '0' }))}>
+        onClick={async () => {
+          const ok = await act.run(() => call('create_job', {
+            startup_id: s.id,
+            description: text.trim(),
+            work_secs: work,
+            review_secs: null,
+            customer_key: needsKey ? key.trim().toLowerCase() : null,
+          }, { deposit: yocto ?? '0' }))
+          if (ok) {
+            setText('')
+            setSecret(null)
+            setSaved(false)
+            setCopied(false)
+          }
+        }}>
         Pay {pay || '0'} NEAR into escrow
       </button>
       {!account && <p className="muted small">{CONNECT_NOTE}</p>}
@@ -382,7 +392,7 @@ export function Detail({ startup, onRefresh }: { startup: Startup | undefined; o
           <section className="panel"><h3>Jobs (escrow)</h3><Jobs startupId={s.id} /></section>
         </div>
         <aside className="detail-side">
-          {account !== null && account === s.founder && <FounderPanel key={`${s.id}-${s.description}-${s.results_private}`} s={s} />}
+          {account !== null && account === s.founder && <FounderPanel key={s.id} s={s} />}
           <BuyPanel s={s} />
           <OrderPanel s={s} />
         </aside>
