@@ -6,6 +6,7 @@ import { Detail } from './components/Detail.tsx'
 import { CreateStartup } from './components/CreateStartup.tsx'
 import { MyAccount } from './components/MyAccount.tsx'
 import { useWallet, explain } from './lib/walletContext.ts'
+import { useAttention } from './lib/attention.ts'
 
 /** Tiny hash router: "#/" is the market, "#/startup/3" is startup 3. No dependency needed. */
 function useRoute(): { startupId: number | null; me: boolean; create: boolean } {
@@ -53,6 +54,10 @@ export default function App() {
   const [reloadKey, setReloadKey] = useState(0)
   const wallet = useWallet()
   const [walletError, setWalletError] = useState<string | null>(null)
+  const attention = useAttention(wallet.account, wallet.version)
+  useEffect(() => {
+    document.title = attention.total > 0 ? `(${attention.total}) Heterotopia | startups you can own a piece of` : 'Heterotopia | startups you can own a piece of'
+  }, [attention.total])
 
   // Re-read from the chain when the user asks (Refresh / Try again).
   const load = useCallback(() => {
@@ -77,7 +82,10 @@ export default function App() {
           <nav className="nav" aria-label="Main">
             <a href="#/" className={!me && !create ? 'is-here' : undefined} aria-current={!me && !create ? 'page' : undefined}>Explore</a>
             <a href="#/create" className={create ? 'is-here' : undefined} aria-current={create ? 'page' : undefined}>Create</a>
-            <a href="#/me" className={me ? 'is-here' : undefined} aria-current={me ? 'page' : undefined}>My account</a>
+            <a href="#/me" className={me ? 'is-here' : undefined} aria-current={me ? 'page' : undefined}>
+              My account
+              {attention.total > 0 && <span className="dot" title={`${attention.toReview} to review, ${attention.toRefund} to refund${attention.hasClaim ? ', revenue to claim' : ''}`} aria-label={`${attention.total} things need you`} />}
+            </a>
           </nav>
           <div className="topbar-right">
             <button className="icon-btn" onClick={toggleTheme} aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} title={theme === 'dark' ? 'Light mode' : 'Dark mode'}>

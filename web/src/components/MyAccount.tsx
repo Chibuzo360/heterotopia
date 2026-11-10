@@ -54,11 +54,15 @@ function TokenCard({ t, s }: { t: Token; s: Startup | undefined }) {
   )
 }
 
-function OrderCard({ j, s, onChanged }: { j: Job; s: Startup | undefined; onChanged: () => void }) {
+function OrderCard({ j, s, onChanged, remember }: { j: Job; s: Startup | undefined; onChanged: () => void; remember: boolean }) {
   const { call, busy } = useWallet()
   const act = useAction()
   const [reason, setReason] = useState('')
   const [rejecting, setRejecting] = useState(false)
+  const [reveal, setReveal] = useState(false)
+  // Finished orders keep their answer out of sight unless the person chose to remember keys on this device.
+  const finished = j.status === 'Paid' || j.status === 'Refunded'
+  const hidden = finished && !remember && !reveal
   const [now] = useState(() => Date.now())
   const expired = j.status === 'Open' && now > j.deadline_ms
   const reviewOver = j.status === 'Delivered' && now > j.delivered_at_ms + j.review_ms
@@ -77,7 +81,7 @@ function OrderCard({ j, s, onChanged }: { j: Job; s: Startup | undefined; onChan
         {j.agent ? ` · agent ${j.agent.split('.')[0]}` : ''}
         {j.status === 'Open' && !expired ? ` · due ${new Date(j.deadline_ms).toLocaleString()}` : ''}
       </div>
-      <JobResult j={j} />
+      {hidden ? (j.result && <button type="button" className="btn btn-small btn-inline" onClick={() => setReveal(true)}>Show result</button>) : <JobResult j={j} />}
       {j.status === 'Open' && !expired && <p className="small muted">No result yet. An agent program has to pick this up, and this page cannot tell whether one is running. If nothing arrives by the due time you can take your payment back here.</p>}
       {expired && (
         <div className="job-actions">
@@ -92,6 +96,7 @@ function OrderCard({ j, s, onChanged }: { j: Job; s: Startup | undefined; onChan
           {reviewOver && <button className="btn btn-small" disabled={busy} onClick={() => run('settle_job', { job_id: j.id })}>Settle (review window ended)</button>}
           {rejecting && (
             <div className="reject-row">
+              <p className="small warn">Rejecting freezes the payment until the platform reviews it. For a private result you will be asked to share it.</p>
               <input value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} placeholder="Why are you rejecting it?" aria-label="Reason for rejecting" />
               <button className="btn btn-small" disabled={busy || reason.trim().length === 0}
                 onClick={() => run('reject_job', { job_id: j.id, reason: reason.trim() })}>Send rejection</button>
@@ -122,6 +127,11 @@ export function MyAccount({ startups }: { startups: Startup[] | null }) {
   const [remember, setRemember] = useState(rememberOn())
   const [savedCount, setSavedCount] = useState(0)
   useEffect(() => { setSavedCount(savedKeyCount(account)) }, [account, remember, tick])
+  // Re-read every 10 seconds while the tab is visible, so a delivered result appears by itself.
+  useEffect(() => {
+    const id = window.setInterval(() => { if (!document.hidden) setTick((k) => k + 1) }, 10_000)
+    return () => window.clearInterval(id)
+  }, [])
 
   useEffect(() => {
     if (!account) return
@@ -204,7 +214,7 @@ export function MyAccount({ startups }: { startups: Startup[] | null }) {
                     <span className="count">{list.length}</span>
                     <span className="small muted job-section-hint">{sec.hint}</span>
                   </summary>
-                  <div className="jobs">{list.map((j) => <OrderCard key={j.id} j={j} s={byId.get(j.startup_id)} onChanged={refresh} />)}</div>
+                  <div className="jobs">{list.map((j) => <OrderCard key={j.id} j={j} s={byId.get(j.startup_id)} onChanged={refresh} remember={remember} />)}</div>
                 </details>
               )
             })}

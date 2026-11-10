@@ -3,7 +3,7 @@ import type { Job } from '../lib/types.ts'
 import { decryptResult } from '../lib/decrypt.ts'
 import { RichText } from './RichText.tsx'
 import { CopyButton } from './CopyButton.tsx'
-import { loadKey } from '../lib/keys.ts'
+import { loadKey, rememberOn } from '../lib/keys.ts'
 import { useWallet } from '../lib/walletContext.ts'
 
 /** Shows what an agent delivered. Public results are text; private ones open with the customer's secret key. */
@@ -23,7 +23,7 @@ export function JobResult({ j }: { j: Job }) {
     )
   }
   // A key saved on this device opens the result by itself.
-  const savedSecret = loadKey(account, j.customer_key)
+  const savedSecret = rememberOn() ? loadKey(account, j.customer_key) : null
   const auto = savedSecret && plain === null ? decryptResult(savedSecret, j.result) : null
   const shown = plain ?? auto
   const open = () => {

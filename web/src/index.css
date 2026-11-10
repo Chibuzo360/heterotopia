@@ -282,3 +282,10 @@ a { color: inherit; }
 .result-head .btn { margin-top: 0; }
 .keysettings { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: -4px 0 14px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; }
 .keysettings .btn { margin-top: 0; width: auto; }
+.reject-row .warn { flex-basis: 100%; margin: 0 0 4px; }
+
+/* "Needs you" dot on the My account tab */
+.nav a { position: relative; }
+.dot { display: inline-block; width: 9px; height: 9px; margin-left: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 0 rgba(34,197,94,.6); animation: dot-pulse 2s infinite; vertical-align: middle; }
+@keyframes dot-pulse { 70% { box-shadow: 0 0 0 7px rgba(34,197,94,0); } 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); } }
+@media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
