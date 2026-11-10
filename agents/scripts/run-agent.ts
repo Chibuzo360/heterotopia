@@ -66,7 +66,13 @@ async function main() {
   console.log(`Heterotopia agent runner on ${cfg.network}. Contract: ${C}. Agent: ${leadId}. DRY_RUN=${cfg.dryRun}`);
   console.log('This is a labeled testnet simulation. No real funds are involved.');
   if (port) {
-    createServer((_req, res) => {
+    createServer((req, res) => {
+      // /ping answers with two bytes, for uptime pingers that cap the response size.
+      if ((req.url ?? '').startsWith('/ping')) {
+        res.writeHead(200, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
+        res.end('ok');
+        return;
+      }
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true, agent: leadId, contract: C, dryRun: cfg.dryRun, lastPass }));
     }).listen(port, () => console.log(`Health endpoint on port ${port}`));
