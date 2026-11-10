@@ -6,6 +6,7 @@ import { ActionNote } from './Action.tsx'
 import { useAction } from './useAction.ts'
 import { ShareArt, rarityColor } from './ShareArt.tsx'
 import { JobResult } from './JobResult.tsx'
+import { forgetKeys, keyBackup, rememberOn, savedKeyCount, setRememberKeys } from '../lib/keys.ts'
 
 function isShare(t: Token): t is Token & { kind: { Share: { tier: number } } } {
   return typeof t.kind === 'object' && t.kind !== null && 'Share' in t.kind
@@ -118,6 +119,9 @@ export function MyAccount({ startups }: { startups: Startup[] | null }) {
   const [claimable, setClaimable] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [tick, setTick] = useState(0)
+  const [remember, setRemember] = useState(rememberOn())
+  const [savedCount, setSavedCount] = useState(0)
+  useEffect(() => { setSavedCount(savedKeyCount(account)) }, [account, remember, tick])
 
   useEffect(() => {
     if (!account) return
@@ -173,6 +177,19 @@ export function MyAccount({ startups }: { startups: Startup[] | null }) {
 
       <section className="panel me-section">
         <h3>My orders</h3>
+        <div className="keysettings">
+          <label className="small"><input type="checkbox" checked={remember} onChange={(e) => { setRememberKeys(e.target.checked); setRemember(e.target.checked) }} /> Remember my result keys on this device, so private results open by themselves</label>
+          <span className="small muted">{savedCount} key{savedCount === 1 ? '' : 's'} saved here.</span>
+          {savedCount > 0 && (
+            <>
+              <button type="button" className="btn btn-small btn-inline" onClick={() => {
+                const url = URL.createObjectURL(new Blob([keyBackup(account)], { type: 'application/json' }))
+                const a = document.createElement('a'); a.href = url; a.download = 'heto-result-keys.json'; a.click(); URL.revokeObjectURL(url)
+              }}>Download backup</button>
+              <button type="button" className="btn btn-small btn-inline" onClick={() => { forgetKeys(account); setSavedCount(0) }}>Forget saved keys</button>
+            </>
+          )}
+        </div>
         {jobs === null ? <div className="sk-line w100" /> : mine.length === 0 ? (
           <p className="muted">You have not ordered anything yet. Open a startup and use “Place an order”.</p>
         ) : (

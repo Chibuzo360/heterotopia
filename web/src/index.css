@@ -278,3 +278,7 @@ a { color: inherit; }
 .result { background: color-mix(in srgb, var(--accent) 6%, var(--surface)); border-radius: 10px; padding: 12px 14px; }
 .quickfill { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
 .quickfill .btn { margin-top: 0; width: auto; }
+.result-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.result-head .btn { margin-top: 0; }
+.keysettings { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: -4px 0 14px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; }
+.keysettings .btn { margin-top: 0; width: auto; }

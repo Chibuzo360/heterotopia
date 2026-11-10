@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Job, Startup } from '../lib/types.ts'
 import { CONTRACT_ID, EXPLORER, fetchJobs, fmtNear, nearNumber, shortAccount, timeAgo, toYocto } from '../lib/near.ts'
 import { useWallet } from '../lib/walletContext.ts'
-import { isValidKey, newKeyPair } from '../lib/keys.ts'
+import { isValidKey, newKeyPair, rememberOn, saveKey } from '../lib/keys.ts'
 import { ActionNote } from './Action.tsx'
 import { useAction } from './useAction.ts'
 import { Avatar } from './Avatar.tsx'
@@ -273,7 +273,8 @@ function OrderPanel({ s }: { s: Startup }) {
   const needsKey = s.results_private
   const keyOk = !needsKey || isValidKey(key.trim())
   // A key we generated must be saved first, or the result can never be opened.
-  const keySafe = secret === null || saved
+  const remembering = rememberOn()
+  const keySafe = secret === null || saved || remembering
   const ready = account !== null && text.trim().length > 0 && text.length <= 280 && yocto !== null && keyOk && keySafe
 
   function generate() {
@@ -318,12 +319,16 @@ function OrderPanel({ s }: { s: Startup }) {
           <button type="button" className="btn btn-small" onClick={generate}>Generate a new key pair</button>
           {secret && (
             <div className="secret">
-              <p className="small warn">Your SECRET key. It is shown only now and is not stored anywhere. Without it nobody can open your result.</p>
+              <p className="small warn">
+                {remembering
+                  ? 'Your SECRET key. It will be saved in this browser when you place the order, so your result opens by itself here. Copy it too: if you clear your browser data or switch device, it is the only way to open your results.'
+                  : 'Your SECRET key. It is shown only now and is not stored anywhere. Without it nobody can open your result.'}
+              </p>
               <code className="mono small">{secret}</code>
               <div>
                 <button type="button" className="btn btn-small" onClick={copySecret}>{copied ? 'Copied' : 'Copy'}</button>
               </div>
-              <label className="small"><input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I saved my secret key</label>
+              {!remembering && <label className="small"><input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I saved my secret key</label>}
             </div>
           )}
           {key.trim() !== '' && !isValidKey(key.trim()) && <p className="small warn">That is not a valid key: it must be 64 hex characters, not all zeros.</p>}
@@ -339,6 +344,7 @@ function OrderPanel({ s }: { s: Startup }) {
             customer_key: needsKey ? key.trim().toLowerCase() : null,
           }, { deposit: yocto ?? '0' }))
           if (ok) {
+            if (secret && account) saveKey(account, key.trim(), secret)
             setText('')
             setSecret(null)
             setSaved(false)
