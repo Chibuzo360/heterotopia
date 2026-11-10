@@ -8,7 +8,7 @@
 import nacl from 'tweetnacl';
 
 export const PREFIX = 'v1:';
-/** The contract stores at most 1024 characters per result. */
+/** The contract stores at most 1024 characters per result. */  
 export const MAX_SEALED_CHARS = 1024;
 /** Longest plaintext (bytes) that still fits the on-chain limit after sealing and base64. */
 export const MAX_PLAINTEXT_BYTES = 640;

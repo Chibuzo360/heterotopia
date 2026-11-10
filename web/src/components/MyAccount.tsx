@@ -4,56 +4,48 @@ import { fetchAllJobs, fetchClaimable, fetchTokens, fmtNear, shortAccount, timeA
 import { useWallet } from '../lib/walletContext.ts'
 import { ActionNote } from './Action.tsx'
 import { useAction } from './useAction.ts'
-import { Avatar } from './Avatar.tsx'
+import { ShareArt, rarityColor } from './ShareArt.tsx'
 import { JobResult } from './JobResult.tsx'
-
-interface Holding { startupId: number; shares: Map<number, number>; roles: number }
 
 function isShare(t: Token): t is Token & { kind: { Share: { tier: number } } } {
   return typeof t.kind === 'object' && t.kind !== null && 'Share' in t.kind
 }
 
-function group(tokens: Token[]): Holding[] {
-  const by = new Map<number, Holding>()
-  for (const t of tokens) {
-    const h = by.get(t.startup_id) ?? { startupId: t.startup_id, shares: new Map<number, number>(), roles: 0 }
-    if (isShare(t)) h.shares.set(t.kind.Share.tier, (h.shares.get(t.kind.Share.tier) ?? 0) + 1)
-    else h.roles += 1
-    by.set(t.startup_id, h)
-  }
-  return [...by.values()].sort((a, b) => b.startupId - a.startupId)
-}
-
-/** One company you hold a stake in. Front: the headline. Back: the detail, and a way to the full page. */
-function HoldingCard({ h, s }: { h: Holding; s: Startup | undefined }) {
+/** One token you own, drawn like a collectible. Front: the art and headline. Back: the detail and a way to the full page. */
+function TokenCard({ t, s }: { t: Token; s: Startup | undefined }) {
   const [flipped, setFlipped] = useState(false)
-  const total = [...h.shares.values()].reduce((a, b) => a + b, 0)
-  const name = s?.name ?? `Startup #${h.startupId}`
+  const share = isShare(t)
+  const tier = share ? t.kind.Share.tier : 0
+  const tierInfo = s?.tiers[tier]
+  const name = s?.name ?? `Startup #${t.startup_id}`
+  const roleName = share ? '' : Object.keys(t.kind)[0] ?? 'Role'
+  const rar = share ? rarityColor(tier) : '#e0b54d'
   return (
-    <div className={`flip${flipped ? ' is-flipped' : ''}`}>
+    <div className={`nft${flipped ? ' is-flipped' : ''}`} style={{ ['--rar' as string]: rar }}>
       <div className="flip-inner">
-        <div className="flip-face flip-front">
-          <Avatar name={name} id={h.startupId} />
-          <div className="flip-title">{name}</div>
-          <div className="flip-big num">{total} {total === 1 ? 'share' : 'shares'}{h.roles > 0 ? ` + ${h.roles} role` : ''}</div>
-          <button className="btn btn-small" onClick={() => setFlipped(true)}>Flip for details</button>
-        </div>
-        <div className="flip-face flip-back">
-          <div className="flip-title">{name} <span className="muted small">#{h.startupId}</span></div>
+        <button className="nft-face nft-front" onClick={() => setFlipped(true)} aria-label={`${name} token ${t.token_id}. Flip for details`}>
+          <ShareArt seed={`${t.startup_id}:${t.token_id}`} tier={tier} role={!share} label={`Artwork for ${name} token ${t.token_id}`} />
+          <div className="nft-meta">
+            <div className="nft-row">
+              <span className="nft-id mono">#{t.token_id}</span>
+              <span className="nft-tier">{share ? tierInfo?.name ?? `Tier ${tier}` : roleName}</span>
+            </div>
+            <div className="nft-price">{share && tierInfo ? `${fmtNear(tierInfo.price)} NEAR` : share ? 'Share' : 'Role'}</div>
+            <div className="nft-sub">{name}</div>
+          </div>
+        </button>
+        <div className="nft-face nft-back">
+          <div className="flip-title">{name} <span className="muted small">#{t.startup_id}</span></div>
           <ul className="flip-list">
-            {[...h.shares.entries()].sort((a, b) => a[0] - b[0]).map(([tier, n]) => (
-              <li key={tier}>
-                <span>{s?.tiers[tier]?.name ?? `Tier ${tier}`}</span>
-                <span className="num">{n} × {s?.tiers[tier] ? `${fmtNear(s.tiers[tier].price)} NEAR` : ''}</span>
-              </li>
-            ))}
-            {h.roles > 0 && <li><span>Role tokens</span><span className="num">{h.roles}</span></li>}
-            {s && <li><span>Startup revenue so far</span><span className="num">{fmtNear(s.revenue)} NEAR</span></li>}
+            <li><span>Token</span><span className="num">{t.token_id}</span></li>
+            <li><span>Type</span><span>{share ? `Share · ${tierInfo?.name ?? `tier ${tier}`}` : `Role · ${roleName}`}</span></li>
+            {share && tierInfo && <li><span>Price</span><span className="num">{fmtNear(tierInfo.price)} NEAR</span></li>}
+            {s && <li><span>Startup revenue</span><span className="num">{fmtNear(s.revenue)} NEAR</span></li>}
             {s && <li><span>Status</span><span>{s.status}</span></li>}
           </ul>
           <div className="flip-actions">
             <button className="btn btn-small" onClick={() => setFlipped(false)}>Back</button>
-            <a className="btn btn-small" href={`#/startup/${h.startupId}`}>More</a>
+            <a className="btn btn-small" href={`#/startup/${t.startup_id}`}>More</a>
           </div>
         </div>
       </div>
@@ -85,7 +77,7 @@ function OrderCard({ j, s, onChanged }: { j: Job; s: Startup | undefined; onChan
         {j.status === 'Open' && !expired ? ` · due ${new Date(j.deadline_ms).toLocaleString()}` : ''}
       </div>
       <JobResult j={j} />
-      {j.status === 'Open' && !expired && <p className="small muted">Waiting for an agent to pick this up. If it is not delivered by the due time you can take your payment back.</p>}
+      {j.status === 'Open' && !expired && <p className="small muted">No result yet. An agent program has to pick this up, and this page cannot tell whether one is running. If nothing arrives by the due time you can take your payment back here.</p>}
       {expired && (
         <div className="job-actions">
           <p className="small warn">Nothing was delivered before the deadline. You get the whole payment back.</p>
@@ -136,7 +128,7 @@ export function MyAccount({ startups }: { startups: Startup[] | null }) {
     return () => { cancelled = true }
   }, [account, version, tick])
 
-  const holdings = useMemo(() => group(tokens ?? []), [tokens])
+  const owned = useMemo(() => (tokens ?? []).slice().sort((a, b) => b.startup_id - a.startup_id || a.token_id.localeCompare(b.token_id, undefined, { numeric: true })), [tokens])
   const mine = useMemo(() => (jobs ?? []).filter((j) => j.customer === account).sort((a, b) => b.id - a.id), [jobs, account])
   const byId = useMemo(() => new Map((startups ?? []).map((s) => [s.id, s])), [startups])
   const refresh = () => { setTick((k) => k + 1); window.setTimeout(() => setTick((k) => k + 1), 4000) }
@@ -169,12 +161,12 @@ export function MyAccount({ startups }: { startups: Startup[] | null }) {
       {error && <div className="notice notice-error" role="alert">Could not read the chain: {error}<button onClick={refresh}>Try again</button></div>}
 
       <section className="panel me-section">
-        <h3>What I hold</h3>
-        {tokens === null ? <div className="sk-line w100" /> : holdings.length === 0 ? (
+        <h3>What I own <span className="count">{tokens?.length ?? 0}</span></h3>
+        {tokens === null ? <div className="sk-line w100" /> : owned.length === 0 ? (
           <p className="muted">You do not hold any shares yet. Pick a startup on the <a href="#/">home page</a> and buy one.</p>
         ) : (
-          <div className="flip-grid">
-            {holdings.map((h) => <HoldingCard key={h.startupId} h={h} s={byId.get(h.startupId)} />)}
+          <div className="nft-grid">
+            {owned.map((t) => <TokenCard key={t.token_id} t={t} s={byId.get(t.startup_id)} />)}
           </div>
         )}
       </section>

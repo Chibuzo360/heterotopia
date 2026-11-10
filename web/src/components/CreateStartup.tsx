@@ -8,7 +8,7 @@ const MAX_DESCRIPTION = 280
 const CONNECT_NOTE = 'Connect a wallet (top right) to create a heto-startup.'
 
 /** Create a heto-startup. Needs a connected wallet; you become its founder. */
-export function CreateStartup() {
+export function CreateStartup({ defaultOpen = false }: { defaultOpen?: boolean }) {
   const { account, call, busy } = useWallet()
   const act = useAction()
   const [name, setName] = useState('')
@@ -29,7 +29,7 @@ export function CreateStartup() {
     priceYocto !== null && supplyOk
 
   return (
-    <details className="panel create">
+    <details className="panel create" open={defaultOpen || undefined}>
       <summary>Create a heto-startup</summary>
       <p className="muted small">
         A heto-startup is a startup created on Heterotopia. Say what it is for in one or two sentences; that text appears on its card and page.
@@ -74,7 +74,7 @@ export function CreateStartup() {
         Create startup
       </button>
       {!account && <p className="muted small">{CONNECT_NOTE}</p>}
-      <ActionNote state={act.state} doneText="Startup created. It appears in the list below." />
+      <ActionNote state={act.state} doneText="Startup created. Find it under Explore." />
     </details>
   )
 }

@@ -79,7 +79,8 @@ export async function runPass(cfg: RunnerConfig, deps: Deps, state: RunnerState)
     for (const j of jobs) {
       if (j.status === 'Open') {
         if (deps.now() > j.deadline_ms - cfg.deadlineMarginMs) {
-          out.skipped.push({ jobId: j.id, reason: 'too close to the deadline' });
+          const over = deps.now() > j.deadline_ms
+          out.skipped.push({ jobId: j.id, reason: over ? 'the deadline has already passed; the customer can refund it, it cannot be delivered' : 'less than the safety margin left before the deadline' });
           continue;
         }
         if (j.private && !j.customer_key) {

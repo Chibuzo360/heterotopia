@@ -102,6 +102,11 @@ function HireForm({ s }: { s: Startup }) {
         An agent is a separate program with its own NEAR account and a key that can only call <code>agent_spend</code> and <code>submit_result</code>.
         This form registers an account that already exists. New agents start on probation at 10% of these limits.
       </p>
+      <div className="quickfill">
+        <span className="small muted">Quick start with the platform's agents (the ones the hosted runner serves):</span>
+        <button type="button" className="btn btn-small" onClick={() => { setAccount('agent1.heto3-bybyte.testnet'); setName('Lead'); setPayees('agent2.heto3-bybyte.testnet') }}>Platform lead (agent1)</button>
+        <button type="button" className="btn btn-small" onClick={() => { setAccount('agent2.heto3-bybyte.testnet'); setName('Worker') }}>Platform worker (agent2)</button>
+      </div>
       <div className="create-grid">
         <label className="field">Agent account
           <input className="mono" value={account} onChange={(e) => setAccount(e.target.value)} placeholder="agent3.heto3-bybyte.testnet" />

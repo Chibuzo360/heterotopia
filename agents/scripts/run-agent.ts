@@ -5,6 +5,7 @@
 // It signs with the agent's restricted key only: that key can call agent_spend and submit_result.
 // DRY_RUN=true (default) needs no AI credits. Keys come from the git-ignored .env, never printed.
 import { readFileSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { loadConfig, need } from '../src/config.js';
 import { nearUsdQuote } from '../src/intents.js';
 import { encryptTo } from '../src/crypto.js';
@@ -21,6 +22,10 @@ const agent = makeAccount(provider, leadId, need('AGENT_SECRET_KEY'));
 const pollMs = Math.max(3, Number(process.env.POLL_SECS ?? 10)) * 1000;
 const once = process.argv.includes('--once');
 const feeNear = process.env.WORKER_FEE_NEAR ?? '0.005';
+// Hosting: when PORT is set (Render and similar), answer HTTP so the host sees a live web service.
+// An uptime pinger hitting this URL also keeps a free instance awake.
+const port = process.env.PORT ? Number(process.env.PORT) : null;
+let lastPass = 'not yet';
 const STATE_FILE = new URL('../.agent-state.json', import.meta.url);
 
 function loadState(): RunnerState {
@@ -60,12 +65,19 @@ const deps: Deps = {
 async function main() {
   console.log(`Heterotopia agent runner on ${cfg.network}. Contract: ${C}. Agent: ${leadId}. DRY_RUN=${cfg.dryRun}`);
   console.log('This is a labeled testnet simulation. No real funds are involved.');
+  if (port) {
+    createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, agent: leadId, contract: C, dryRun: cfg.dryRun, lastPass }));
+    }).listen(port, () => console.log(`Health endpoint on port ${port}`));
+  }
   const state = loadState();
   const rc = { leadId, workerFeeYocto: near(feeNear).toString(), deadlineMarginMs: 30_000 };
   do {
     try {
       const out = await runPass(rc, deps, state);
       writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+      lastPass = new Date().toISOString();
       for (const k of out.skipped) console.log(`job ${k.jobId}: skipped: ${k.reason}`);
       if (once) console.log(`pass done: delivered ${out.delivered.length}, worker paid ${out.paidWorker.length}, skipped ${out.skipped.length}`);
     } catch (e) {

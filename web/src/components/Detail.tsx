@@ -157,6 +157,7 @@ function JobRow({ j }: { j: Job }) {
         {j.agent ? ` · agent ${j.agent.split('.')[0]}` : ''}
       </div>
       {(mine || !j.private) && <JobResult j={j} />}
+      {mine && j.status === 'Open' && <p className="small muted">No result yet. An agent program has to pick this up; the page cannot tell whether one is running. If nothing arrives by the deadline, you can take your payment back from My account.</p>}
       {mine && j.status === 'Delivered' && (
         <div className="job-actions">
           <button className="btn btn-small" disabled={busy} onClick={() => act.run(() => call('accept_job', { job_id: j.id }))}>Accept result</button>

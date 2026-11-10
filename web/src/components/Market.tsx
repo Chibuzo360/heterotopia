@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import type { Startup } from '../lib/types.ts'
 import { fmtNear, nearNumber } from '../lib/near.ts'
 import { Avatar } from './Avatar.tsx'
-import { CreateStartup } from './CreateStartup.tsx'
 
 type SortKey = 'newest' | 'revenue' | 'raised' | 'cheapest'
 
@@ -100,8 +99,6 @@ export function Market({ startups, loading, error, onRetry }: { startups: Startu
           <div><span className="num">{fmtNear(totalRevenue)} NEAR</span><span className="label">revenue paid in</span></div>
         </div>
       </section>
-
-      <CreateStartup />
 
       <div className="toolbar">
         <input type="search" placeholder="Search by name, purpose, founder or id" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search startups" />

@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Startup } from './lib/types.ts'
-import { CONTRACT_ID, fetchStartups } from './lib/near.ts'
+import { CONTRACT_ID, fetchStartups, shortAccount } from './lib/near.ts'
 import { Market } from './components/Market.tsx'
 import { Detail } from './components/Detail.tsx'
+import { CreateStartup } from './components/CreateStartup.tsx'
 import { MyAccount } from './components/MyAccount.tsx'
-import { AccountBar } from './components/AccountBar.tsx'
 import { useWallet, explain } from './lib/walletContext.ts'
 
 /** Tiny hash router: "#/" is the market, "#/startup/3" is startup 3. No dependency needed. */
-function useRoute(): { startupId: number | null; me: boolean } {
+function useRoute(): { startupId: number | null; me: boolean; create: boolean } {
   const read = () => {
     const m = window.location.hash.match(/^#\/startup\/(\d+)/)
-    return { startupId: m ? Number(m[1]) : null, me: window.location.hash.startsWith('#/me') }
+    return { startupId: m ? Number(m[1]) : null, me: window.location.hash.startsWith('#/me'), create: window.location.hash.startsWith('#/create') }
   }
   const [route, setRoute] = useState(read)
   useEffect(() => {
@@ -22,8 +22,30 @@ function useRoute(): { startupId: number | null; me: boolean } {
   return route
 }
 
+type Theme = 'dark' | 'light'
+
+/** Dark by default; follows the system until the person picks one, then remembers it (when the browser allows). */
+function useTheme(): [Theme, () => void] {
+  const system = (): Theme => (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+  const [theme, setTheme] = useState<Theme>(() => {
+    try {
+      const saved = window.localStorage.getItem('heto-theme')
+      if (saved === 'dark' || saved === 'light') return saved
+    } catch { /* storage can be blocked; fall through */ }
+    return system()
+  })
+  useEffect(() => { document.documentElement.setAttribute('data-theme', theme) }, [theme])
+  const toggle = () => {
+    const next: Theme = theme === 'dark' ? 'light' : 'dark'
+    setTheme(next)
+    try { window.localStorage.setItem('heto-theme', next) } catch { /* ignore */ }
+  }
+  return [theme, toggle]
+}
+
 export default function App() {
-  const { startupId, me } = useRoute()
+  const { startupId, me, create } = useRoute()
+  const [theme, toggleTheme] = useTheme()
   const [startups, setStartups] = useState<Startup[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -52,9 +74,17 @@ export default function App() {
       <header className="topbar">
         <div className="wrap topbar-in">
           <a className="brand" href="#/"><span className="brand-mark" />Heterotopia <span className="muted">/ heto</span></a>
+          <nav className="nav" aria-label="Main">
+            <a href="#/" className={!me && !create ? 'is-here' : undefined} aria-current={!me && !create ? 'page' : undefined}>Explore</a>
+            <a href="#/create" className={create ? 'is-here' : undefined} aria-current={create ? 'page' : undefined}>Create</a>
+            <a href="#/me" className={me ? 'is-here' : undefined} aria-current={me ? 'page' : undefined}>My account</a>
+          </nav>
           <div className="topbar-right">
-            {wallet.account && <a className={`navlink${me ? ' is-here' : ''}`} href="#/me">My account</a>}
+            <button className="icon-btn" onClick={toggleTheme} aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} title={theme === 'dark' ? 'Light mode' : 'Dark mode'}>
+              {theme === 'dark' ? '☀' : '☾'}
+            </button>
             <span className="net">NEAR testnet</span>
+            {wallet.account && <span className="net mono" title={wallet.account}>{shortAccount(wallet.account, 20)}</span>}
             {wallet.account ? (
               <button className="btn btn-small" onClick={() => wallet.disconnect().catch((e) => setWalletError(explain(e)))}>Disconnect</button>
             ) : (
@@ -66,13 +96,17 @@ export default function App() {
           </div>
         </div>
       </header>
-      <AccountBar />
       {walletError && <div className="wrap"><div className="notice notice-error" role="alert">{walletError}<button onClick={() => setWalletError(null)}>Dismiss</button></div></div>}
       <div className="banner">
         Labeled testnet simulation. No real funds. Agent work runs in dry-run mode and is not financial advice. Contract <span className="mono">{CONTRACT_ID}</span>.
       </div>
       {me ? (
         <MyAccount startups={startups} />
+      ) : create ? (
+        <main className="wrap">
+          <h1 className="page-title">Create a heto-startup</h1>
+          <CreateStartup defaultOpen />
+        </main>
       ) : startupId === null ? (
         <Market startups={startups} loading={loading} error={error} onRetry={load} />
       ) : (

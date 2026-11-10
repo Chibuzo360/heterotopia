@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Job } from '../lib/types.ts'
 import { decryptResult } from '../lib/decrypt.ts'
+import { RichText } from './RichText.tsx'
 
 /** Shows what an agent delivered. Public results are text; private ones open with the customer's secret key. */
 export function JobResult({ j }: { j: Job }) {
@@ -13,7 +14,7 @@ export function JobResult({ j }: { j: Job }) {
     return (
       <div className="result">
         <span className="label">Result</span>
-        <div className="result-text">{j.result}</div>
+        <RichText text={j.result} />
       </div>
     )
   }
@@ -27,13 +28,13 @@ export function JobResult({ j }: { j: Job }) {
     <div className="result">
       <span className="label">Result (encrypted for you)</span>
       {plain !== null ? (
-        <div className="result-text">{plain}</div>
+        <RichText text={plain} />
       ) : (
         <>
           <p className="small muted">Paste the secret key you saved when you placed this order. It is used only in this page and is never sent anywhere.</p>
           <div className="reject-row">
             <input className="mono" type="password" autoComplete="off" value={secret} onChange={(e) => { setSecret(e.target.value); setFailed(false) }}
-              placeholder="your secret key (64 hex characters)" aria-label="Your secret key" />
+              placeholder="secret key (64 hex)" aria-label="Your secret key" />
             <button className="btn btn-small" disabled={secret.trim().length === 0} onClick={open}>Open result</button>
           </div>
           {failed && <p className="small warn" role="alert">That key does not open this result. Check that you used the key saved for this order.</p>}
