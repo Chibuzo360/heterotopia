@@ -2079,3 +2079,73 @@ fn a_migrated_startup_cannot_get_a_new_directive() {
     c.mark_migrated(1, investor());
     c.set_agent_directive(1, stranger(), "model-a".into(), "".into(), "lead".into());
 }
+
+// ------------------------------------------------------------------ fund_agents
+
+fn fund(c: &mut Contract, who: AccountId, amount: NearToken) {
+    set_ctx(who, amount);
+    c.fund_agents(1);
+}
+
+#[test]
+fn anyone_can_top_up_the_agent_budget() {
+    let mut c = setup();
+    fund(&mut c, investor(), near(2));
+    fund(&mut c, stranger(), near(3));
+    let s = c.get_startup(1).unwrap();
+    assert_eq!(s.agent_balance, near(5));
+    assert_eq!(s.revenue, zero(), "a top-up is not revenue");
+    assert_eq!(s.ops_balance, zero());
+    assert!(last_log().contains("agents_funded"));
+}
+
+#[test]
+fn a_top_up_pays_no_platform_fee() {
+    let mut c = setup_with(500, Some(alloc(10_000, 0, 0, 0)));
+    fund(&mut c, investor(), near(10));
+    assert_eq!(c.get_startup(1).unwrap().agent_balance, near(10));
+    assert!(get_created_receipts().is_empty(), "nothing is sent to the platform");
+}
+
+#[test]
+fn a_top_up_does_not_change_what_shareholders_earn() {
+    let mut c = setup();
+    buy(&mut c, investor(), 0, near(1));
+    fund(&mut c, stranger(), near(4));
+    assert_eq!(c.get_claimable(investor()), zero());
+}
+
+#[test]
+fn topped_up_money_still_obeys_the_agent_limits() {
+    let mut c = with_agent();
+    fund(&mut c, payer(), near(10));
+    assert_eq!(c.get_startup(1).unwrap().agent_balance, near(15));
+    assert!(spend(&mut c, stranger(), near(1), 1), "within its caps");
+    assert!(!spend(&mut c, stranger(), near(2), 2), "over the per-payment cap");
+    assert!(!spend(&mut c, payer(), near(1), 3), "payee not on the list");
+    assert_eq!(c.get_startup(1).unwrap().agent_balance, near(14));
+}
+
+#[test]
+#[should_panic(expected = "Attach funds for the agents")]
+fn a_top_up_needs_money() {
+    let mut c = setup();
+    fund(&mut c, investor(), zero());
+}
+
+#[test]
+#[should_panic(expected = "Startup not found")]
+fn cannot_top_up_an_unknown_startup() {
+    let mut c = setup();
+    set_ctx(investor(), near(1));
+    c.fund_agents(9);
+}
+
+#[test]
+#[should_panic(expected = "Startup is migrated and frozen")]
+fn cannot_top_up_a_migrated_startup() {
+    let mut c = setup();
+    set_ctx(founder(), zero());
+    c.mark_migrated(1, accounts(4));
+    fund(&mut c, investor(), near(1));
+}

@@ -435,6 +435,39 @@ impl Contract {
         self.internal_revenue(startup_id, env::predecessor_account_id(), deposit);
     }
 
+    /// Anyone (an investor, a supporter, a customer) tops up a startup's agent budget directly. The whole
+    /// deposit goes into the agent budget bucket: no platform fee and no split, so it is exactly what the
+    /// startup's agents can use, and only inside their limits (per-payment cap, daily cap, allowed payees).
+    /// It is not revenue, so it does not change what shareholders earn. Nothing here lets the funder spend it.
+    #[payable]
+    pub fn fund_agents(&mut self, startup_id: StartupId) {
+        let deposit = env::attached_deposit();
+        require!(!deposit.is_zero(), "Attach funds for the agents");
+        let funder = env::predecessor_account_id();
+        let startup = self
+            .startups
+            .get_mut(&startup_id)
+            .unwrap_or_else(|| env::panic_str("Startup not found"));
+        require!(
+            startup.status == StartupStatus::Active,
+            "Startup is migrated and frozen"
+        );
+        startup.agent_balance = startup
+            .agent_balance
+            .checked_add(deposit)
+            .unwrap_or_else(|| env::panic_str("Agent budget overflow"));
+        emit_event(
+            "heto",
+            "1.0.0",
+            "agents_funded",
+            json!([{
+                "startup_id": startup_id,
+                "from": funder,
+                "amount": deposit.as_yoctonear().to_string(),
+            }]),
+        );
+    }
+
     /// Pays the caller everything they have earned: revenue settled from shares they sold or
     /// roles they lost, plus what their current share and role NFTs have accrued. Pays across all
     /// startups in one go.
