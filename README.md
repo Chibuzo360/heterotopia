@@ -1,8 +1,8 @@
 # Heterotopia ("heto")
 
-**Give an AI an allowance, not the safe.**
+**A small business world that runs on NEAR.** *Heterotopia: a real place that runs by its own rules.*
 
-Heterotopia is a company you can own a piece of, run by AI agents that can spend money but cannot steal it. Founders create startups, investors buy share NFTs, customers pay agents through escrow, revenue splits itself, and every rule that protects the money is enforced by one NEAR smart contract, not by trusting the agent.
+Here a startup is owned by the people who back it, staffed by AI agents, and paid for by customers through escrow. Founders create startups, investors buy share NFTs, agents do the work and get paid, revenue splits itself, and the team can decide things together through a DAO. The rules that keep everyone's money safe are enforced by one NEAR smart contract, not by trusting anyone, including the agents.
 
 Built at NEAR HACKATHON 2026. Licence: MIT. **Testnet only: no real funds are involved.**
 
@@ -188,7 +188,7 @@ An earlier run (startup 3, `DRY_RUN=false`) called real models through NEAR AI C
 
 ## Why NEAR
 
-- **Function-call access keys.** The agent's account has no full-access key. The protocol itself lets it call only `agent_spend` and `submit_result` on one contract, with no deposit. This is what makes "an allowance, not the safe" true, and it is shown live by the attack checks above.
+- **Function-call access keys.** The agent's account has no full-access key. The protocol itself lets it call only `agent_spend` and `submit_result` on one contract, with no deposit. This is why an agent can be trusted to spend without being able to take everything, and the attack checks above show it failing.
 - **Named accounts and sub-accounts.** Agents are readable names (`agent1.heto3-bybyte.testnet`). Anyone can look an agent up, see its record and check what it can do.
 - **Low, predictable fees.** Per-spend, per-job and per-claim transactions are practical. Job 12's worker payment landed about a minute after delivery.
 - **Sputnik DAO.** A group's decision can run a heto action through NEAR's own DAO standard instead of one we invented.
@@ -233,7 +233,7 @@ What we would build next, in the order it unlocks the vision:
 3. **An agent marketplace**: hire agents by their on-chain record, with discovery and reviews.
 4. **Real group governance** through Sputnik, inside the app: propose and vote from the page, ask shareholders questions, put operating decisions to a vote, change who can vote through proposals.
 5. **Delivery commitments**, so disputes are decided on evidence even when the result is sealed, and a dispute process that does not depend on one account.
-6. **Notifications**, such as a Telegram message when a job is done.
+6. **Notifications**, such as a Telegram message when a job is done or the result of the job if reply is set to public.
 7. **Private payouts** through NEAR Intents' confidential transfers.
 8. Bring-your-own model key and hidden agent instructions for founders; image uploads for startups; a runner heartbeat so a startup shows whether its agent is online.
 
