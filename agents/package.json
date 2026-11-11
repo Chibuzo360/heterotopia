@@ -9,7 +9,8 @@
     "test": "tsx --test test/*.test.ts",
     "setup": "tsx scripts/setup.ts",
     "e2e": "tsx scripts/e2e.ts",
-    "agent": "tsx scripts/run-agent.ts"
+    "agent": "tsx scripts/run-agent.ts",
+    "dao": "tsx scripts/dao.ts"
   },
   "dependencies": {
     "near-api-js": "^7.4.0",
