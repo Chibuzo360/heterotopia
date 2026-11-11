@@ -8,6 +8,7 @@ import { useAction } from './useAction.ts'
 import { Avatar } from './Avatar.tsx'
 import { AgentControls, FounderPanel } from './Manage.tsx'
 import { JobResult } from './JobResult.tsx'
+import { FundAgents } from './FundAgents.tsx'
 
 const CONNECT_NOTE = 'Connect a wallet (top right) to do this. Browsing stays read-only without one.'
 
@@ -392,7 +393,7 @@ export function Detail({ startup, onRefresh }: { startup: Startup | undefined; o
 
       <div className="detail-cols">
         <div className="detail-main">
-          <section className="panel"><h3>Money</h3><Buckets s={s} /></section>
+          <section className="panel"><h3>Money</h3><Buckets s={s} /><FundAgents s={s} /></section>
           <section className="panel"><h3>How each deposit is split</h3><SplitBar s={s} /></section>
           <section className="panel"><h3>Share tiers</h3><Tiers s={s} /></section>
           <section className="panel"><h3>Agents</h3><Agents s={s} /></section>
