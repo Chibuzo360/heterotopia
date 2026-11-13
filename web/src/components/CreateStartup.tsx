@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { toYocto } from '../lib/near.ts'
+import type { Startup } from '../lib/types.ts'
 import { useWallet } from '../lib/walletContext.ts'
 import { ActionNote } from './Action.tsx'
 import { useAction } from './useAction.ts'
@@ -13,7 +14,7 @@ const FIRST_TIER: TierDraft = { name: 'General', price: '0.1', supply: '100', we
 const CONNECT_NOTE = 'Connect a wallet (top right) to create a heto-startup.'
 
 /** Create a heto-startup. Needs a connected wallet; you become its founder. */
-export function CreateStartup({ defaultOpen = false }: { defaultOpen?: boolean }) {
+export function CreateStartup({ defaultOpen = false, startups = null }: { defaultOpen?: boolean; startups?: Startup[] | null }) {
   const { account, call, busy } = useWallet()
   const act = useAction()
   const [name, setName] = useState('')
@@ -21,6 +22,8 @@ export function CreateStartup({ defaultOpen = false }: { defaultOpen?: boolean }
   const [tiers, setTiers] = useState<TierDraft[]>([{ ...FIRST_TIER }])
 
   const left = MAX_DESCRIPTION - purpose.length
+  const key = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase()
+  const taken = name.trim() ? startups?.find((s) => key(s.name) === key(name)) : undefined
   const parsed = tiers.map((x) => {
     const supply = Number(x.supply)
     const weight = Number(x.weight)
@@ -36,7 +39,7 @@ export function CreateStartup({ defaultOpen = false }: { defaultOpen?: boolean }
   const namesUnique = new Set(names).size === names.length
   const ready =
     account !== null &&
-    name.trim().length >= 1 && name.trim().length <= 64 &&
+    name.trim().length >= 1 && name.trim().length <= 64 && !taken &&
     purpose.trim().length >= 1 && purpose.length <= MAX_DESCRIPTION &&
     parsed.length >= 1 && parsed.length <= MAX_TIERS && parsed.every((x) => x.ok) && namesUnique
   const setTier = (i: number, patch: Partial<TierDraft>) => setTiers((all) => all.map((x, j) => (j === i ? { ...x, ...patch } : x)))
@@ -49,8 +52,9 @@ export function CreateStartup({ defaultOpen = false }: { defaultOpen?: boolean }
         You become its founder. Revenue is split 60% shareholders, 20% agent budget, 20% operations, and job results are public until you change that.
       </p>
       <div className="create-grid">
-        <label className="field">Name
-          <input value={name} maxLength={64} onChange={(e) => setName(e.target.value)} placeholder="Signal Desk" />
+        <label className="field full">Name
+          <input value={name} maxLength={64} onChange={(e) => setName(e.target.value)} placeholder="Signal Desk" aria-invalid={taken ? true : undefined} />
+          {taken && <span className="small warn">A startup called &ldquo;{taken.name}&rdquo; already exists (Startup #{taken.id}). Pick a different name so people can tell them apart. This is checked here in the app; the contract itself does not enforce unique names.</span>}
         </label>
         <label className="field full">What is it for?
           <textarea rows={3} value={purpose} maxLength={MAX_DESCRIPTION} onChange={(e) => setPurpose(e.target.value)}

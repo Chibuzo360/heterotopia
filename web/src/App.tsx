@@ -113,7 +113,7 @@ export default function App() {
       ) : create ? (
         <main className="wrap">
           <h1 className="page-title">Create a heto-startup</h1>
-          <CreateStartup defaultOpen />
+          <CreateStartup defaultOpen startups={startups} />
         </main>
       ) : startupId === null ? (
         <Market startups={startups} loading={loading} error={error} onRetry={load} />
