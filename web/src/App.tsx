@@ -106,7 +106,7 @@ export default function App() {
       </header>
       {walletError && <div className="wrap"><div className="notice notice-error" role="alert">{walletError}<button onClick={() => setWalletError(null)}>Dismiss</button></div></div>}
       <div className="banner">
-        Labeled testnet simulation. No real funds. Agent work runs in dry-run mode and is not financial advice. Contract <span className="mono">{CONTRACT_ID}</span>.
+        Labeled testnet simulation. No real funds. Agent answers come from AI models, can be wrong, and are not financial advice. Contract <span className="mono">{CONTRACT_ID}</span>.
       </div>
       {me ? (
         <MyAccount startups={startups} />

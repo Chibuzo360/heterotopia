@@ -5,6 +5,11 @@ import { ActionNote } from './Action.tsx'
 import { useAction } from './useAction.ts'
 
 const MAX_DESCRIPTION = 280
+const MAX_TIERS = 8
+
+interface TierDraft { name: string; price: string; supply: string; weight: string }
+const FIRST_TIER: TierDraft = { name: 'General', price: '0.1', supply: '100', weight: '1' }
+
 const CONNECT_NOTE = 'Connect a wallet (top right) to create a heto-startup.'
 
 /** Create a heto-startup. Needs a connected wallet; you become its founder. */
@@ -13,20 +18,28 @@ export function CreateStartup({ defaultOpen = false }: { defaultOpen?: boolean }
   const act = useAction()
   const [name, setName] = useState('')
   const [purpose, setPurpose] = useState('')
-  const [tierName, setTierName] = useState('General')
-  const [price, setPrice] = useState('0.1')
-  const [supply, setSupply] = useState('100')
+  const [tiers, setTiers] = useState<TierDraft[]>([{ ...FIRST_TIER }])
 
   const left = MAX_DESCRIPTION - purpose.length
-  const priceYocto = toYocto(price)
-  const supplyNum = Number(supply)
-  const supplyOk = Number.isInteger(supplyNum) && supplyNum >= 1 && supplyNum <= 1_000_000
+  const parsed = tiers.map((x) => {
+    const supply = Number(x.supply)
+    const weight = Number(x.weight)
+    const price = toYocto(x.price)
+    const ok =
+      x.name.trim().length >= 1 && x.name.trim().length <= 32 &&
+      price !== null &&
+      Number.isInteger(supply) && supply >= 1 && supply <= 1_000_000 &&
+      Number.isInteger(weight) && weight >= 1 && weight <= 100
+    return { ok, name: x.name.trim(), price: price ?? '0', max_supply: supply, weight }
+  })
+  const names = parsed.map((x) => x.name.toLowerCase())
+  const namesUnique = new Set(names).size === names.length
   const ready =
     account !== null &&
     name.trim().length >= 1 && name.trim().length <= 64 &&
     purpose.trim().length >= 1 && purpose.length <= MAX_DESCRIPTION &&
-    tierName.trim().length >= 1 && tierName.trim().length <= 32 &&
-    priceYocto !== null && supplyOk
+    parsed.length >= 1 && parsed.length <= MAX_TIERS && parsed.every((x) => x.ok) && namesUnique
+  const setTier = (i: number, patch: Partial<TierDraft>) => setTiers((all) => all.map((x, j) => (j === i ? { ...x, ...patch } : x)))
 
   return (
     <details className="panel create" open={defaultOpen || undefined}>
@@ -44,31 +57,48 @@ export function CreateStartup({ defaultOpen = false }: { defaultOpen?: boolean }
             placeholder="AI agents write a daily NEAR/USDC market signal. Shareholders fund the agents and share the subscription revenue." />
           <span className={`small ${left < 20 ? 'warn' : 'muted'}`}>{left} characters left</span>
         </label>
-        <label className="field">First tier name
-          <input value={tierName} maxLength={32} onChange={(e) => setTierName(e.target.value)} />
-        </label>
-        <label className="field">Price per share (NEAR)
-          <input inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} />
-        </label>
-        <label className="field">Supply
-          <input inputMode="numeric" value={supply} onChange={(e) => setSupply(e.target.value)} />
-        </label>
+      </div>
+      <div className="tier-editor">
+        <strong>Share tiers</strong>
+        <p className="muted small">
+          Each tier is a kind of share NFT with its own price, supply and weight. A weight of 3 earns three times as much revenue per share as a weight of 1.
+          Tiers are fixed when the startup is created, so add them now (up to {MAX_TIERS}).
+        </p>
+        {tiers.map((x, i) => (
+          <div className="tier-row" key={i}>
+            <label className="field">{i === 0 ? 'Tier name' : `Tier ${i + 1} name`}
+              <input value={x.name} maxLength={32} onChange={(e) => setTier(i, { name: e.target.value })} />
+            </label>
+            <label className="field">Price (NEAR)
+              <input inputMode="decimal" value={x.price} onChange={(e) => setTier(i, { price: e.target.value })} />
+            </label>
+            <label className="field">Supply
+              <input inputMode="numeric" value={x.supply} onChange={(e) => setTier(i, { supply: e.target.value })} />
+            </label>
+            <label className="field">Weight
+              <input inputMode="numeric" value={x.weight} onChange={(e) => setTier(i, { weight: e.target.value })} />
+            </label>
+            <button type="button" className="btn btn-small btn-danger" disabled={tiers.length === 1} aria-label={`Remove tier ${i + 1}`}
+              onClick={() => setTiers((all) => all.filter((_, j) => j !== i))}>Remove</button>
+          </div>
+        ))}
+        {!namesUnique && <p className="small warn">Tier names must be different.</p>}
+        <button type="button" className="btn btn-small" disabled={tiers.length >= MAX_TIERS}
+          onClick={() => setTiers((all) => [...all, { name: '', price: '1', supply: '10', weight: '3' }])}>Add a tier</button>
       </div>
       <button className="btn btn-primary" disabled={!ready || busy} title={account ? undefined : CONNECT_NOTE}
         onClick={async () => {
           const ok = await act.run(() => call('create_startup', {
             name: name.trim(),
             description: purpose.trim(),
-            tiers: [{ name: tierName.trim(), price: priceYocto, max_supply: supplyNum, weight: 1 }],
+            tiers: parsed.map(({ name: n, price, max_supply, weight }) => ({ name: n, price, max_supply, weight })),
             treasury: null,
             allocation: null,
           }))
           if (ok) {
             setName('')
             setPurpose('')
-            setTierName('General')
-            setPrice('0.1')
-            setSupply('100')
+            setTiers([{ ...FIRST_TIER }])
           }
         }}>
         Create startup
